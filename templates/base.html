@@ -42,6 +42,9 @@
                 <span>自定义可视化</span>
             </a>
             <div class="nav-divider"></div>
+            <a href="/local-data" title="备份与回收站" class="nav-item {% if request.path == '/local-data' %}active{% endif %}">
+                <span class="nav-icon" aria-hidden="true">↺</span><span>备份与回收站</span>
+            </a>
             <a href="/search" class="nav-item {% if request.path.startswith('/search') %}active{% endif %}">
                 <span class="nav-icon">🔍</span>
                 <span>全文检索</span>

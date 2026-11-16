@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ document.title }} - 文档预览</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/local_data.css') }}"></head>
+<body class="preview-body">
+<header class="preview-header"><div><h1>{{ document.title }}</h1><p>{{ document.file_name }}</p></div>
+<div class="preview-actions"><a class="btn btn-outline" href="/documents">返回文档</a><a class="btn btn-primary" href="/api/documents/{{ document.id }}/download">下载原文件</a></div></header>
+<main class="preview-main">
+{% if document.description %}<p>{{ document.description }}</p>{% endif %}
+{% if preview.message %}<p class="preview-note" role="status">{{ preview.message }}</p>{% endif %}
+{% if preview.kind == 'pdf' %}
+<object class="pdf-preview" data="/api/documents/{{ document.id }}/view" type="application/pdf"><p>浏览器无法内嵌 PDF，请<a href="/api/documents/{{ document.id }}/view" target="_blank" rel="noopener">打开 PDF</a>。</p></object>
+{% elif preview.kind == 'image' %}
+<img class="document-image" src="/api/documents/{{ document.id }}/view" alt="{{ document.title }}">
+{% elif preview.kind == 'excel' %}
+<nav class="sheet-tabs" aria-label="工作表">{% for sheet in preview.sheets %}<a class="btn {{ 'btn-primary' if sheet == preview.sheet else 'btn-outline' }}" href="{{ url_for('local.document_preview', identifier=document.id, sheet=sheet) }}">{{ sheet }}</a>{% endfor %}</nav>
+<div class="preview-table"><table><tbody>{% for row in preview.rows %}<tr><th>{{ (preview.page - 1) * 50 + loop.index }}</th>{% for value in row %}<td>{{ value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+<nav class="preview-pagination">{% if preview.page > 1 %}<a class="btn btn-outline" href="{{ url_for('local.document_preview', identifier=document.id, sheet=preview.sheet, page=preview.page-1) }}">上一页</a>{% endif %}<span>第 {{ preview.page }} 页</span>{% if preview.more %}<a class="btn btn-outline" href="{{ url_for('local.document_preview', identifier=document.id, sheet=preview.sheet, page=preview.page+1) }}">下一页</a>{% endif %}</nav>
+{% elif preview.kind == 'word' %}<article class="word-preview">{% for paragraph in preview.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}</article>
+{% elif preview.kind == 'text' %}<pre class="text-preview">{{ preview.text }}</pre>
+{% endif %}
+</main></body></html>

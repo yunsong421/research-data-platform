@@ -102,9 +102,7 @@ function catSel(id) {
 }
 
 function showView(id) {
-    fetch('/api/detail/documents/' + id).then(function (r) { return r.text() }).then(function (h) {
-        showInlineModal('文档详情 #' + id, h);
-    });
+    window.open('/documents/' + id + '/preview', '_blank', 'noopener');
 }
 
 function editForm(doc) {
@@ -151,10 +149,10 @@ function showEdit(id) {
 }
 
 function del(id) {
-    if (!confirm('确认删除此文档？删除后无法恢复。')) return;
+    if (!confirm('将此文档移入回收站？之后可以恢复。')) return;
     fetch('/api/documents/' + id, { method: 'DELETE' }).then(function (r) { return r.json() }).then(function (d) {
         if (d.ok) {
-            showToast('删除成功', 'success');
+            showToast('已移入回收站', 'success');
             try { loadData(1); } catch (e) {}
         } else {
             showToast(d.error || '删除失败', 'error');

@@ -156,25 +156,35 @@ function exportData(t) {
 function showImport(t) {
     var names = {questionnaires:'\u95ee\u5377', interviews:'\u8bbf\u8c08', documents:'\u6587\u6863'};
     var h = '<form id="imp-form" enctype="multipart/form-data">';
+    if (t === 'questionnaires') {
+        h += '<div class="form-group"><label>导入类型</label><select class="form-control" name="mode">';
+        h += '<option value="responses">答卷数据表</option><option value="catalog">问卷列表（导出格式）</option></select></div>';
+    }
     h += '<div class="form-group"><label>\u9009\u62e9 Excel \u6587\u4ef6</label>';
-    h += '<input type="file" class="form-control" name="file" accept=".xlsx"></div>';
+    h += '<input type="file" class="form-control" name="file" accept=".xlsx" required></div>';
     h += '<div class="form-actions">';
     h += '<button type="button" class="btn btn-outline" onclick="closeModal()">\u53d6\u6d88</button>';
     h += '<button type="submit" class="btn btn-primary">\u5bfc\u5165</button></div></form>';
     openModal('\u5bfc\u5165' + names[t] + '\u6570\u636e', h);
     document.getElementById('imp-form').addEventListener('submit', function(e){
         e.preventDefault();
+        var button = this.querySelector('button[type="submit"]');
+        if (button.disabled) return;
+        button.disabled = true;
+        button.textContent = '正在导入…';
         var fd = new FormData(this);
         fetch('/api/import/' + t, {method:'POST', body:fd})
             .then(function(r){return r.json()})
             .then(function(d){
                 if (d.ok) {
-                    showToast('\u6210\u529f\u5bfc\u5165 ' + d.count + ' \u6761\u6570\u636e', 'success');
-                    closeModal(); location.reload();
+                    showToast(d.mode === 'responses' ? '已导入 ' + d.count + ' 份问卷，共 ' + d.response_count + ' 条答卷' : '成功导入 ' + d.count + ' 条数据', 'success');
+                    closeModal();
+                    if (typeof loadData === 'function') loadData(1); else location.reload();
                 } else {
                     showToast(d.error || '\u5bfc\u5165\u5931\u8d25', 'error');
                 }
             })
-            .catch(function(){showToast('\u5bfc\u5165\u5931\u8d25', 'error')});
+            .catch(function(){showToast('导入失败，请检查文件或连接后重试', 'error')})
+            .finally(function(){button.disabled = false; button.textContent = '导入';});
     });
 }

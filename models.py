@@ -25,6 +25,17 @@ def _enable_pragmas(dbapi_connection, connection_record):
 event.listen(engine, 'connect', _enable_pragmas)
 
 
+class TrashEntry(Base):
+    __tablename__ = 'trash_entries'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_type = Column(String(30), nullable=False)
+    original_id = Column(Integer, nullable=False)
+    title = Column(String(240), nullable=False)
+    payload = Column(Text, nullable=False)
+    deleted_at = Column(DateTime, default=datetime.now)
+
+
 class ChartDataset(Base):
     __tablename__ = 'chart_datasets'
 

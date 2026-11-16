@@ -17,8 +17,10 @@ from config import session_secret
 app.secret_key = session_secret()
 init_app()
 
-from visualizations import charts
+from visualizations import charts, questionnaire_frame, read_workbook, MAX_BYTES
 app.register_blueprint(charts)
+from local_tools import local, move_to_trash
+app.register_blueprint(local)
 
 MAX_FILE_SIZE = 50 * 1024 * 1024
 
@@ -40,6 +42,13 @@ def api_attachment_item(identifier):
     if not item:
         return jsonify(error='记录不存在'), 404
     return jsonify(item=item.to_dict())
+
+
+def _questionnaire_frame(questionnaire, nrows=None):
+    frame = questionnaire_frame(questionnaire)
+    if frame is not None:
+        return frame.head(nrows) if nrows is not None else frame
+    return _load_survey_frame(nrows=nrows)
 
 
 def _load_survey_frame(nrows=None):
@@ -152,8 +161,8 @@ def api_update_document(did):
 def api_delete_document(did):
     db = get_db(); doc = db.query(Document).get(did)
     if not doc: return jsonify({"error":"未找到"}),404
-    db.delete(doc); db.commit()
-    return jsonify({"ok":True})
+    trash_id = move_to_trash(db, doc, 'documents')
+    return jsonify(ok=True, trash_id=trash_id)
 
 @app.route("/interviews")
 def interviews_page():
@@ -272,27 +281,22 @@ def api_detail_html(item_type, item_id):
         parts.append("<div class=\"detail-section\"><div class=\"detail-label\">\u56de\u7b54\u6570</div><div class=\"detail-value\">" + str(q.respondent_count) + "</div></div>")
         parts.append("<div class=\"detail-section\"><div class=\"detail-label\">\u6807\u7b7e</div><div class=\"detail-value\">" + (tgs or "\u65e0\u6807\u7b7e") + "</div></div>")
         parts.append("<div class=\"detail-section\"><div class=\"detail-label\">\u521b\u5efa\u65f6\u95f4</div><div class=\"detail-value\">" + (q.created_at.strftime("%Y-%m-%d %H:%M") if q.created_at else "-") + "</div></div>")
-        src_doc = db.query(Document).filter(Document.category == 'source').first()
+        own_frame = questionnaire_frame(q)
+        src_doc = db.query(Document).filter(Document.category == 'source').first() if own_frame is None else None
         btn = '<button class="btn btn-sm btn-outline" onclick="loadQuestionnairePart(' + str(item_id) + ',\'columns\')">\u95ee\u5377\u9898\u76ee</button> '
         btn += '<button class="btn btn-sm btn-outline" onclick="loadQuestionnairePart(' + str(item_id) + ',\'preview\')">\u6570\u636e\u9884\u89c8</button> '
-        if src_doc:
+        if own_frame is not None:
+            btn += f'<a class="btn btn-sm btn-outline" href="/api/questionnaires/{item_id}/download">下载数据表</a> '
+            btn += '<a class="btn btn-sm btn-outline" href="/visualizations">生成图表</a>'
+        elif src_doc:
             btn += '<a class="btn btn-sm btn-outline" href="/api/documents/' + str(src_doc.id) + '/download">\u4e0b\u8f7d\u539f\u59cb\u6570\u636e</a>'
         parts.append('<div class="detail-section"><div class="detail-label">\u95ee\u5377\u6570\u636e</div><div class="detail-value">' + btn + '</div></div>')
         return "\n".join(parts)
     elif item_type == "documents":
         d = db.query(Document).get(item_id)
         if not d: return "not found"
-        is_pdf = d.file_type and "pdf" in d.file_type
-        parts = []
-        parts.append("<div><b>标题：</b> " + h.escape(str(d.title)) + "</div>")
-        parts.append("<div><b>文件：</b> " + h.escape(str(d.file_name or "")) + "</div>")
-        parts.append('<div>' + h.escape(d.description or '') + '</div>')
-        if d.file_type in ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'):
-            parts.append(f'<img src="/api/documents/{item_id}/view" alt="文档图片" style="max-width:100%;height:auto">')
-        if is_pdf:
-            parts.append("<embed src='/api/documents/" + str(item_id) + "/view' type='application/pdf' width='100%' height='500px'>")
-        parts.append("<div><a href='/api/documents/" + str(item_id) + "/download'>download</a></div>")
-        return "<br>".join(parts)
+        return (f'<a class="btn btn-primary" href="/documents/{item_id}/preview" target="_blank" rel="noopener">在线预览</a>'
+                f'<iframe title="文档预览" src="/documents/{item_id}/preview" style="width:100%;height:65vh;border:0"></iframe>')
     elif item_type == "interviews":
         i = db.query(InterviewRecording).get(item_id)
         if not i: return "not found"
@@ -509,10 +513,8 @@ def api_questionnaire_item(qid):
     if request.method == 'GET':
         return jsonify(item=item.to_dict())
     if request.method == 'DELETE':
-        db.query(ItemTag).filter_by(item_id=qid, item_type='questionnaire').delete()
-        db.delete(item)
-        db.commit()
-        return jsonify(ok=True)
+        trash_id = move_to_trash(db, item, 'questionnaires')
+        return jsonify(ok=True, trash_id=trash_id)
     try:
         title, description, count, tags = questionnaire_values(request.get_json(silent=True))
     except ValueError as error:
@@ -696,9 +698,8 @@ def api_delete_interview(iid):
     item = db.query(InterviewRecording).get(iid)
     if not item:
         return jsonify({"error": "\u672a\u627e\u5230"}), 404
-    db.delete(item)
-    db.commit()
-    return jsonify({"ok": True})
+    trash_id = move_to_trash(db, item, 'interviews')
+    return jsonify(ok=True, trash_id=trash_id)
 
 
 def _store_upload(db, upload, force_kind=None, category="student"):
@@ -775,6 +776,11 @@ def api_import_table(item_type):
     upload = request.files.get("file")
     if not upload or not upload.filename:
         return jsonify({"error": "\u8bf7\u9009\u62e9\u6587\u4ef6"}), 400
+    if not upload.filename.lower().endswith('.xlsx'):
+        return jsonify(error='请选择 .xlsx 文件；旧版 .xls 请先另存为 .xlsx。'), 400
+    raw = upload.stream.read(MAX_BYTES + 1)
+    if len(raw) > MAX_BYTES:
+        return jsonify(error='Excel 文件不能超过 10 MB。'), 413
     try:
         import pandas as pd
     except Exception:
@@ -782,17 +788,54 @@ def api_import_table(item_type):
 
     db = get_db()
     try:
-        frame = pd.read_excel(upload).fillna('')
+        from local_tools import office_archive
+        with office_archive(raw):
+            pass
+        frame = pd.read_excel(io.BytesIO(raw)).dropna(how='all').fillna('')
+        frame.columns = [str(column).strip() for column in frame.columns]
     except Exception as exc:
         return jsonify({"error": "\u5bfc\u5165\u5931\u8d25: %s" % exc}), 400
 
     if item_type == 'questionnaires':
+        mode = request.form.get('mode', 'auto')
+        if mode not in {'auto', 'responses', 'catalog'}:
+            return jsonify(error='导入类型无效。'), 400
+        is_catalog = mode == 'catalog' or (mode == 'auto' and ('标题' in frame or 'title' in frame))
+        if not is_catalog:
+            try:
+                sheets = read_workbook(raw)
+            except ValueError as error:
+                return jsonify(error=str(error)), 400
+            items = []
+            filename = attachment_name(upload.filename)
+            stem = os.path.splitext(filename)[0]
+            for sheet, responses in sheets:
+                content = {'survey_table': json.loads(responses.to_json(orient='split', force_ascii=False, index=False)),
+                           'source_name': filename, 'sheet': sheet}
+                title = (stem if len(sheets) == 1 else f'{stem} / {sheet}')[:200]
+                item = Questionnaire(title=title, respondent_count=len(responses),
+                                     description=f'导入文件：{filename}；工作表：{sheet}',
+                                     content=json.dumps(content, ensure_ascii=False))
+                db.add(item)
+                items.append(item)
+            db.commit()
+            return jsonify(ok=True, count=len(items), response_count=sum(row.respondent_count for row in items),
+                           ids=[row.id for row in items], mode='responses')
+        if '标题' not in frame and 'title' not in frame:
+            return jsonify(error='问卷列表需包含“标题”列；答卷结果表请选择“答卷数据表”。未导入任何记录。'), 400
         column = '回答数' if '回答数' in frame else 'respondent_count'
         if column in frame:
             counts = pd.to_numeric(frame[column].replace('', 0), errors='coerce')
             if counts.isna().any() or (counts < 0).any() or ((counts % 1) != 0).any():
                 return jsonify(error='回答数必须为非负整数；未导入任何记录'), 400
             frame[column] = counts
+        # Validate the complete batch before adding any records.
+        if 'content' in frame:
+            for value in frame['content']:
+                try:
+                    questionnaire_frame(Questionnaire(content=str(value or '{}')))
+                except ValueError:
+                    return jsonify(error='问卷列表中的 content 数据无效；未导入任何记录。'), 400
     count = 0
     for _, row in frame.iterrows():
         if item_type == "questionnaires":
@@ -803,6 +846,7 @@ def api_import_table(item_type):
                 title=title,
                 description=str(row.get("\u63cf\u8ff0", row.get("description", "")) or ""),
                 respondent_count=int(row.get("\u56de\u7b54\u6570", row.get("respondent_count", 0)) or 0),
+                content=str(row.get('content', '{}') or '{}'),
             ))
         elif item_type == "interviews":
             title = str(row.get("\u6807\u9898", row.get("title", "")) or "").strip()
@@ -825,8 +869,37 @@ def api_import_table(item_type):
         else:
             return jsonify({"error": "\u7c7b\u578b\u65e0\u6548"}), 400
         count += 1
+    if count == 0:
+        return jsonify(error='没有可导入的记录，请检查表头及标题是否为空。'), 400
     db.commit()
     return jsonify({"ok": True, "count": count})
+
+
+@app.get('/api/questionnaires/<int:qid>/download')
+def api_download_questionnaire(qid):
+    item = get_db().get(Questionnaire, qid)
+    if item is None:
+        return jsonify(error='问卷不存在'), 404
+    frame = questionnaire_frame(item)
+    if frame is None:
+        return jsonify(error='该问卷没有导入答卷数据表'), 404
+    from openpyxl import Workbook
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = '答卷数据'
+    sheet.append(list(frame.columns))
+    for row in frame.itertuples(index=False, name=None):
+        sheet.append(list(row))
+    for row in sheet:
+        for cell in row:
+            if isinstance(cell.value, str):
+                cell.data_type = 's'
+    output = io.BytesIO()
+    workbook.save(output)
+    workbook.close()
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=attachment_name(item.title) + '.xlsx',
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route("/api/questionnaires/<int:qid>/preview")
@@ -838,7 +911,7 @@ def api_questionnaire_preview(qid):
         return '<div>\u672a\u627e\u5230</div>'
 
     try:
-        frame = _load_survey_frame()
+        frame = _questionnaire_frame(q)
     except Exception as exc:
         return '<div>\u8bfb\u53d6\u5931\u8d25: %s</div>' % h.escape(str(exc))
     if frame is None:
@@ -866,8 +939,11 @@ def api_questionnaire_preview(qid):
 @app.route("/api/questionnaires/<int:qid>/columns")
 def api_questionnaire_columns(qid):
     """List the survey questions (columns of the sheet)."""
+    q = get_db().get(Questionnaire, qid)
+    if q is None:
+        return '问卷不存在', 404
     try:
-        frame = _load_survey_frame(nrows=0)
+        frame = _questionnaire_frame(q, nrows=0)
     except Exception as exc:
         return '<div>\u8bfb\u53d6\u5931\u8d25: %s</div>' % h.escape(str(exc))
     if frame is None:

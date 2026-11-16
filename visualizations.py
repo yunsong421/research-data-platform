@@ -19,7 +19,7 @@ from matplotlib.ticker import MaxNLocator
 from openpyxl import load_workbook
 from sqlalchemy import or_
 
-from models import ChartDataset, Document, get_db
+from models import ChartDataset, Document, Questionnaire, get_db
 
 charts = Blueprint('charts', __name__)
 MAX_BYTES = 10 * 1024 * 1024
@@ -106,6 +106,20 @@ def read_workbook(raw):
     return result
 
 
+def questionnaire_frame(item):
+    """Read the response table owned by a questionnaire, if one was imported."""
+    try:
+        content = json.loads(item.content or '{}')
+        table = content.get('survey_table')
+        if table is None:
+            return None
+        if not isinstance(table, dict) or not isinstance(table.get('columns'), list) or not isinstance(table.get('data'), list):
+            raise ValueError('问卷数据格式无效。')
+        return pd.DataFrame(table['data'], columns=table['columns'])
+    except (TypeError, AttributeError, json.JSONDecodeError) as error:
+        raise ValueError('问卷数据格式无效。') from error
+
+
 def frame_for(key):
     db = get_db()
     if key.startswith('saved-'):
@@ -116,6 +130,15 @@ def frame_for(key):
         if item:
             data = json.loads(item.data_json)
             return pd.DataFrame(data['data'], columns=data['columns']), item.name
+    elif key.startswith('questionnaire-'):
+        try:
+            item = db.get(Questionnaire, int(key[14:]))
+        except ValueError:
+            item = None
+        if item is not None:
+            frame = questionnaire_frame(item)
+            if frame is not None:
+                return frame, item.title
     elif key.startswith('document-'):
         try:
             _, identifier, sheet_index = key.split('-')
@@ -161,6 +184,14 @@ def datasets():
     items = [dict(id=f'saved-{row.id}', name=row.name, rows=row.row_count, removable=True)
              for row in db.query(ChartDataset).order_by(ChartDataset.id.desc())]
     warnings = []
+    for questionnaire in db.query(Questionnaire).order_by(Questionnaire.id.desc()):
+        try:
+            frame = questionnaire_frame(questionnaire)
+            if frame is not None:
+                items.append(dict(id=f'questionnaire-{questionnaire.id}', name=f'问卷 / {questionnaire.title}',
+                                  rows=len(frame), removable=False))
+        except ValueError as error:
+            warnings.append(f'{questionnaire.title}：{error}')
     documents = db.query(Document).filter(or_(Document.category == 'source',
                                               Document.file_name.ilike('%.xlsx'))).all()
     for doc in documents:
@@ -204,9 +235,9 @@ def delete_dataset(identifier):
     row = db.get(ChartDataset, identifier)
     if not row:
         raise ValueError('数据集不存在。')
-    db.delete(row)
-    db.commit()
-    return jsonify(ok=True)
+    from local_tools import move_to_trash
+    trash_id = move_to_trash(db, row, 'datasets')
+    return jsonify(ok=True, trash_id=trash_id)
 
 
 @charts.get('/api/visualizations/datasets/<key>')

@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block title %}备份与回收站{% endblock %}
+{% block page_title %}备份与回收站{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/local_data.css') }}">{% endblock %}
+{% block content %}
+<div class="local-page">
+    <p id="local-status" role="status" aria-live="polite"></p>
+    <section class="local-section">
+        <div class="local-heading"><h2>数据库备份</h2><button id="backup-now" class="btn btn-primary">立即备份</button></div>
+        <p class="local-note">每天首次启动自动备份；持续运行时每小时检查。保留最近 7 份自动备份，手动备份不自动删除。</p>
+        <p class="local-note">备份含账号、附件和回收站，保存在本机 data/backups。请另外复制到其他磁盘以防硬盘故障。</p>
+        <div class="local-table"><table class="data-table"><thead><tr><th>备份文件</th><th>大小</th><th>创建时间</th></tr></thead><tbody id="backup-body"></tbody></table></div>
+        <details><summary>恢复整个数据库</summary>
+            <p>先停止网站，打开项目目录的终端，执行下列命令，并将文件名替换为上表中选定的备份。输入 RESTORE 确认。</p>
+            <pre>Windows: .venv\Scripts\python.exe restore_backup.py 备份文件名.db
+macOS / Linux: .venv/bin/python restore_backup.py 备份文件名.db</pre>
+            <p>恢复会回到备份时的资料和账号状态；恢复前会自动保存当前数据库。运行中的网站会阻止恢复。</p>
+        </details>
+    </section>
+    <section class="local-section">
+        <div class="local-heading"><h2>回收站</h2><button id="refresh-trash" class="btn btn-outline">刷新</button></div>
+        <p class="local-note">问卷、文档、访谈及自定义数据集删除后保留在这里。彻底删除后不能从回收站恢复，历史备份仍可能包含该资料。</p>
+        <div class="local-table"><table class="data-table"><thead><tr><th>类型</th><th>标题</th><th>原 ID</th><th>删除时间</th><th>操作</th></tr></thead><tbody id="trash-body"></tbody></table></div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/local_data.js') }}"></script>{% endblock %}

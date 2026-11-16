@@ -136,7 +136,7 @@
     });
     el('delete-data').addEventListener('click', async () => {
         const key = el('dataset').value;
-        if (!key.startsWith('saved-') || !confirm('确认删除这个自定义数据集？')) return;
+        if (!key.startsWith('saved-') || !confirm('将这个数据集移入回收站？之后可以恢复。')) return;
         el('delete-data').disabled = true;
         try {
             await api('datasets/' + key.slice(6), {method: 'DELETE'});

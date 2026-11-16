@@ -240,7 +240,7 @@ class ReleaseTests(unittest.TestCase):
                              'file': (io.BytesIO(png.getvalue()), '中文图片.png', 'image/png')}).get_json()['item']
         did = result['id']
         self.assertEqual(result['file_name'], '中文图片.png')
-        detail = client.get(f'/api/detail/documents/{did}').get_data(as_text=True)
+        detail = client.get(f'/documents/{did}/preview').get_data(as_text=True)
         self.assertNotIn('<img src=x', detail)
         self.assertIn(f'/api/documents/{did}/view', detail)
         for count, expected in [(None, 200), ('invalid', 400)]:
@@ -260,6 +260,154 @@ class ReleaseTests(unittest.TestCase):
         with client.session_transaction() as session:
             session['uid'] = 999999
         self.assertEqual(client.get('/api/documents').status_code, 401)
+
+    def test_s_questionnaire_response_import(self):
+        client = self.module.app.test_client()
+        with client.session_transaction() as session:
+            session['uid'] = 1
+        frame = pd.DataFrame({'群体': ['学生', '教师', None], '得分': [3, 5, None],
+                              '备注': ['<script>alert(1)</script>', '=1+1', None]})
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            frame.to_excel(writer, index=False, sheet_name='答卷')
+            pd.DataFrame({'另一题': ['仅第二份']}).to_excel(writer, index=False, sheet_name='第二份')
+        raw = output.getvalue()
+        imported = client.post('/api/import/questionnaires', data={'mode': 'responses',
+                               'file': (io.BytesIO(raw), '中文问卷.xlsx')})
+        self.assertEqual(imported.status_code, 200, imported.get_json())
+        result = imported.get_json()
+        self.assertEqual((result['count'], result['response_count']), (2, 3))
+        qid, second = result['ids']
+        preview = client.get(f'/api/questionnaires/{qid}/preview').get_data(as_text=True)
+        self.assertIn('学生', preview)
+        self.assertNotIn('<script>alert', preview)
+        self.assertIn('&lt;script&gt;', preview)
+        self.assertNotIn('仅第二份', preview)
+        self.assertIn('仅第二份', client.get(f'/api/questionnaires/{second}/preview').get_data(as_text=True))
+        self.assertIn('群体', client.get(f'/api/questionnaires/{qid}/columns').get_data(as_text=True))
+        self.assertEqual(client.get('/api/questionnaires/999999/columns').status_code, 404)
+        self.assertIn(f'/api/questionnaires/{qid}/download', client.get(f'/api/detail/questionnaires/{qid}').get_data(as_text=True))
+        download = client.get(f'/api/questionnaires/{qid}/download')
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(pd.read_excel(io.BytesIO(download.data))['群体'].tolist(), ['学生', '教师'])
+        keys = [item['id'] for item in client.get('/api/visualizations/datasets').get_json()['datasets']]
+        self.assertIn(f'questionnaire-{qid}', keys)
+        detail = client.get(f'/api/visualizations/datasets/questionnaire-{qid}').get_json()
+        self.assertEqual(detail['rows'], 2)
+        chart = client.post('/api/visualizations/chart', json={'dataset': f'questionnaire-{qid}',
+                            'type': 'bar', 'x': '群体', 'aggregation': 'count', 'top': 12})
+        self.assertEqual(chart.status_code, 200, chart.get_json())
+        before = client.get('/api/questionnaires').get_json()['total']
+        invalid = client.post('/api/import/questionnaires', data={'mode': 'catalog',
+                              'file': (io.BytesIO(raw), 'bad.xlsx')})
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(client.get('/api/questionnaires').get_json()['total'], before)
+        for payload, filename in [(b'not excel', 'bad.xlsx'), (b'', 'bad.xls')]:
+            self.assertEqual(client.post('/api/import/questionnaires', data={
+                'file': (io.BytesIO(payload), filename)}).status_code, 400)
+        empty = io.BytesIO()
+        pd.DataFrame(columns=['题目']).to_excel(empty, index=False)
+        self.assertEqual(client.post('/api/import/questionnaires', data={'mode': 'responses',
+                         'file': (io.BytesIO(empty.getvalue()), 'empty.xlsx')}).status_code, 400)
+        exported = client.get('/api/export/questionnaires').data
+        again = client.post('/api/import/questionnaires', data={'mode': 'catalog',
+                            'file': (io.BytesIO(exported), 'catalog.xlsx')})
+        self.assertEqual(again.status_code, 200)
+        db = self.models.get_db()
+        copies = db.query(self.models.Questionnaire).all()
+        self.assertEqual(len(copies), 4)
+        for item in copies:
+            self.assertIsNotNone(self.module.questionnaire_frame(item))
+        deleted = client.delete(f'/api/questionnaires/{qid}').get_json()['trash_id']
+        self.assertNotIn(f'questionnaire-{qid}', [item['id'] for item in client.get('/api/visualizations/datasets').get_json()['datasets']])
+        self.assertEqual(client.post(f'/api/local/trash/{deleted}/restore').status_code, 200)
+        self.assertIn('学生', client.get(f'/api/questionnaires/{qid}/preview').get_data(as_text=True))
+        db = self.models.get_db()
+        db.query(self.models.Questionnaire).delete()
+        db.commit()
+
+    def test_z_local_backup_trash_and_preview(self):
+        import sqlite3
+        import zipfile
+        from contextlib import closing
+        from backup_store import create_backup, daily_backup, runtime_lock
+        from restore_backup import restore
+        client = self.module.app.test_client()
+        self.assertEqual(client.get('/api/local/trash').status_code, 401)
+        with client.session_transaction() as session:
+            session['uid'] = 1
+        models = self.models
+        db = models.get_db()
+        tag = models.Tag(name='Restore fixture')
+        db.add(tag)
+        db.commit()
+        tag_id = tag.id
+        fixture = b'local fixture contents'
+        created = client.post('/api/documents', data={'title': 'Recover me', 'category': 'teacher',
+                              'tag_ids[]': str(tag_id), 'file': (io.BytesIO(fixture), 'fixture.txt')}).get_json()['item']
+        identifier = created['id']
+        deleted = client.delete(f'/api/documents/{identifier}').get_json()
+        self.assertTrue(deleted['trash_id'])
+        self.assertEqual(client.get(f'/api/documents/{identifier}/download').status_code, 404)
+        self.assertEqual(client.get('/api/local/trash').get_json()['items'][0]['title'], 'Recover me')
+        db = models.get_db()
+        newer = models.Document(id=identifier, title='Keep newer record')
+        db.add(newer)
+        db.commit()
+        restored = client.post(f'/api/local/trash/{deleted["trash_id"]}/restore').get_json()
+        recovered_id = restored['restored_id']
+        self.assertNotEqual(recovered_id, identifier)
+        self.assertEqual(client.get(f'/api/documents/{recovered_id}/download').data, fixture)
+        item = client.get(f'/api/documents/{recovered_id}').get_json()['item']
+        self.assertEqual(item['category'], 'teacher')
+        self.assertEqual(item['tags'][0]['id'], tag_id)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output) as writer:
+            pd.DataFrame({'标题': [f'row-{i}' for i in range(110)]}).to_excel(writer, index=False, sheet_name='第一页')
+            pd.DataFrame({'标题': ['中文第二表']}).to_excel(writer, index=False, sheet_name='第二页')
+        workbook_id = client.post('/api/documents', data={'title': 'Workbook',
+                                  'file': (io.BytesIO(output.getvalue()), 'fixture.xlsx')}).get_json()['item']['id']
+        first = client.get(f'/documents/{workbook_id}/preview').get_data(as_text=True)
+        self.assertIn('下一页', first)
+        self.assertIn('row-0', first)
+        self.assertNotIn('row-60', first)
+        second = client.get(f'/documents/{workbook_id}/preview?page=2').get_data(as_text=True)
+        self.assertIn('row-60', second)
+        other = client.get(f'/documents/{workbook_id}/preview?sheet=第二页').get_data(as_text=True)
+        self.assertIn('中文第二表', other)
+        word = io.BytesIO()
+        with zipfile.ZipFile(word, 'w') as archive:
+            archive.writestr('word/document.xml', '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>中文访谈正文 &lt;script&gt;</w:t></w:r></w:p></w:body></w:document>')
+        word_id = client.post('/api/documents', data={'title': 'Word fixture',
+                             'file': (io.BytesIO(word.getvalue()), 'fixture.docx')}).get_json()['item']['id']
+        page = client.get(f'/documents/{word_id}/preview').get_data(as_text=True)
+        self.assertIn('中文访谈正文', page)
+        self.assertIn('&lt;script&gt;', page)
+        self.assertNotIn('<script>', page)
+        response = client.post('/api/local/backups')
+        self.assertEqual(response.status_code, 201)
+        name = response.get_json()['name']
+        self.assertTrue(daily_backup())
+        self.assertIsNone(daily_backup())
+        backup = Path(self.temp.name) / 'backups' / name
+        with closing(sqlite3.connect(backup)) as connection:
+            self.assertEqual(connection.execute('PRAGMA quick_check').fetchone()[0], 'ok')
+            self.assertEqual(connection.execute('SELECT file_data FROM documents WHERE id=?', (recovered_id,)).fetchone()[0], fixture)
+        with runtime_lock():
+            with self.assertRaises(RuntimeError):
+                restore(name)
+        db = models.get_db()
+        db.add(models.Questionnaire(title='Added after backup'))
+        db.commit()
+        db.remove()
+        models.engine.dispose()
+        preserved = restore(name)
+        self.assertTrue(preserved.is_file())
+        self.assertEqual(models.get_db().query(models.Questionnaire).filter_by(title='Added after backup').count(), 0)
+        self.assertEqual(client.get(f'/api/documents/{recovered_id}/download').data, fixture)
+        deleted = client.delete(f'/api/documents/{recovered_id}').get_json()
+        self.assertEqual(client.delete(f'/api/local/trash/{deleted["trash_id"]}').status_code, 200)
+        self.assertEqual(client.post(f'/api/local/trash/{deleted["trash_id"]}/restore').status_code, 404)
 
 
 if __name__ == '__main__':

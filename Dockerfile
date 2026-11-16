@@ -15,7 +15,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py models.py config.py init_admin.py wsgi.py visualizations.py ./
+COPY app.py models.py config.py init_admin.py wsgi.py visualizations.py local_tools.py backup_store.py restore_backup.py ./
 COPY templates ./templates
 COPY static ./static
 
