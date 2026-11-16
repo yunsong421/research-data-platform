@@ -6,12 +6,17 @@
 !init_admin.py
 !wsgi.py
 !visualizations.py
+!local_tools.py
+!backup_store.py
+!restore_backup.py
 !templates/
 !templates/*.html
 !static/
 !static/css/
 !static/css/style.css
 !static/css/visualizations.css
+!static/css/local_data.css
 !static/js/
 !static/js/app.js
 !static/js/visualizations.js
+!static/js/local_data.js
