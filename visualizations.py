@@ -115,6 +115,14 @@ def questionnaire_frame(item):
             return None
         if not isinstance(table, dict) or not isinstance(table.get('columns'), list) or not isinstance(table.get('data'), list):
             raise ValueError('问卷数据格式无效。')
+        columns, rows = table['columns'], table['data']
+        if (not 1 <= len(columns) <= MAX_COLUMNS or not 1 <= len(rows) <= MAX_ROWS
+                or any(not isinstance(name, str) or not name.strip() for name in columns)
+                or len(set(columns)) != len(columns)
+                or any(not isinstance(row, list) or len(row) != len(columns)
+                       or any(value is not None and not isinstance(value, (str, int, float, bool)) for value in row)
+                       for row in rows)):
+            raise ValueError('问卷表头或答卷结构无效。')
         return pd.DataFrame(table['data'], columns=table['columns'])
     except (TypeError, AttributeError, json.JSONDecodeError) as error:
         raise ValueError('问卷数据格式无效。') from error

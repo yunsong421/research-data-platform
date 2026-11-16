@@ -1,5 +1,6 @@
 """Recoverable deletion and local document previews."""
 import base64
+import codecs
 from datetime import date, datetime
 import io
 import json
@@ -166,10 +167,10 @@ def document_content(doc, sheet_name=None, page=1):
     elif suffix in {'.txt', '.csv', '.md', '.log'}:
         limited = raw[:1024 * 1024]
         try:
-            text = limited.decode('utf-8-sig')
+            text = codecs.getincrementaldecoder('utf-8-sig')().decode(limited, final=len(limited) == len(raw))
         except UnicodeDecodeError:
             try:
-                text = limited.decode('gb18030')
+                text = codecs.getincrementaldecoder('gb18030')().decode(limited, final=len(limited) == len(raw))
             except UnicodeDecodeError:
                 raise ValueError('文本编码无法识别，请另存为 UTF-8 后上传。')
         result.update(kind='text', text=text, message='仅预览前 1 MB。' if len(raw) > len(limited) else '')

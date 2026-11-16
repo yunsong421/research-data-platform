@@ -156,6 +156,9 @@ function exportData(t) {
 function showImport(t) {
     var names = {questionnaires:'\u95ee\u5377', interviews:'\u8bbf\u8c08', documents:'\u6587\u6863'};
     var h = '<form id="imp-form" enctype="multipart/form-data">';
+    if (t !== 'questionnaires') {
+        h += '<input type="hidden" name="category" value="' + (typeof activeCat !== 'undefined' && activeCat === 'teacher' ? 'teacher' : 'student') + '">';
+    }
     if (t === 'questionnaires') {
         h += '<div class="form-group"><label>导入类型</label><select class="form-control" name="mode">';
         h += '<option value="responses">答卷数据表</option><option value="catalog">问卷列表（导出格式）</option></select></div>';

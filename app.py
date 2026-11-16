@@ -3,6 +3,7 @@ import io
 import json
 import mimetypes
 import base64
+import hashlib
 from datetime import datetime, date
 from flask import Flask, render_template, request, jsonify, send_file, redirect, Response, session, url_for
 from flask_cors import CORS
@@ -497,8 +498,8 @@ def questionnaire_values(data):
         tags = list({int(value) for value in data.get('tag_ids', [])})
     except (ValueError, TypeError):
         raise ValueError('回答数或标签格式无效')
-    if count < 0:
-        raise ValueError('回答数不能为负数')
+    if not 0 <= count <= 2147483647:
+        raise ValueError('回答数须为 0 到 2147483647 的整数')
     if tags and get_db().query(Tag).filter(Tag.id.in_(tags)).count() != len(tags):
         raise ValueError('所选标签不存在')
     return data['title'].strip(), str(data.get('description') or ''), count, tags
@@ -542,8 +543,24 @@ def api_export_table(item_type):
     sheet = workbook.active
     sheet.title = item_type
     sheet.append(columns)
-    for row in query.order_by(model.id).all():
-        sheet.append([getattr(row, name) for name in columns])
+    overflow = None
+    for index, row in enumerate(query.order_by(model.id).all(), 1):
+        values = []
+        for name in columns:
+            value = getattr(row, name)
+            if isinstance(value, str) and len(value) > 30000:
+                if overflow is None:
+                    overflow = workbook.create_sheet('_long_text')
+                    overflow.append(['ref', 'part', 'total', 'sha256', 'text'])
+                reference = f'{index}:{name}'
+                chunks = [value[start:start + 30000] for start in range(0, len(value), 30000)]
+                checksum = hashlib.sha256(value.encode('utf-8')).hexdigest()
+                for part, chunk in enumerate(chunks, 1):
+                    overflow.append([reference, part, len(chunks), checksum, chunk])
+                    overflow.cell(overflow.max_row, 5).data_type = 's'
+                value = '@long-text:' + reference
+            values.append(value)
+        sheet.append(values)
         for cell in sheet[sheet.max_row]:
             if isinstance(cell.value, str):
                 cell.data_type = 's'
@@ -791,8 +808,30 @@ def api_import_table(item_type):
         from local_tools import office_archive
         with office_archive(raw):
             pass
-        frame = pd.read_excel(io.BytesIO(raw)).dropna(how='all').fillna('')
+        frame = pd.read_excel(io.BytesIO(raw), keep_default_na=False).dropna(how='all').fillna('')
         frame.columns = [str(column).strip() for column in frame.columns]
+        # Excel cells hold at most 32767 characters; exported long fields live in chunks.
+        references = {value for column in frame for value in frame[column]
+                      if isinstance(value, str) and value.startswith('@long-text:')}
+        if references:
+            chunks = pd.read_excel(io.BytesIO(raw), sheet_name='_long_text', dtype=str, keep_default_na=False).fillna('')
+            if not {'ref', 'part', 'total', 'sha256', 'text'} <= set(chunks.columns):
+                raise ValueError('长文本附表不完整，请使用完整的导出工作簿。')
+            restored = {}
+            for reference in references:
+                records = chunks[chunks['ref'] == reference[len('@long-text:'):]].copy()
+                parts = pd.to_numeric(records['part'], errors='raise')
+                total = pd.to_numeric(records['total'], errors='raise')
+                if records.empty or len(set(parts)) != len(parts) or set(parts) != set(range(1, len(parts) + 1)) or not (total == len(parts)).all():
+                    raise ValueError('长文本分段缺失或重复，未导入任何记录。')
+                records = records.assign(part=parts).sort_values('part')
+                value = ''.join(records['text'])
+                checksum = hashlib.sha256(value.encode('utf-8')).hexdigest()
+                if not (records['sha256'] == checksum).all():
+                    raise ValueError('长文本校验失败，未导入任何记录。')
+                restored[reference] = value
+            for column in frame:
+                frame[column] = frame[column].map(lambda value: restored.get(value, value) if isinstance(value, str) else value)
     except Exception as exc:
         return jsonify({"error": "\u5bfc\u5165\u5931\u8d25: %s" % exc}), 400
 
@@ -826,8 +865,8 @@ def api_import_table(item_type):
         column = '回答数' if '回答数' in frame else 'respondent_count'
         if column in frame:
             counts = pd.to_numeric(frame[column].replace('', 0), errors='coerce')
-            if counts.isna().any() or (counts < 0).any() or ((counts % 1) != 0).any():
-                return jsonify(error='回答数必须为非负整数；未导入任何记录'), 400
+            if counts.isna().any() or (counts < 0).any() or (counts > 2147483647).any() or ((counts % 1) != 0).any():
+                return jsonify(error='回答数须为 0 到 2147483647 的整数；未导入任何记录'), 400
             frame[column] = counts
         # Validate the complete batch before adding any records.
         if 'content' in frame:
@@ -836,6 +875,25 @@ def api_import_table(item_type):
                     questionnaire_frame(Questionnaire(content=str(value or '{}')))
                 except ValueError:
                     return jsonify(error='问卷列表中的 content 数据无效；未导入任何记录。'), 400
+    default_category = request.form.get('category', 'student')
+    if default_category not in ('student', 'teacher'):
+        return jsonify(error='所属分类无效。'), 400
+    if item_type in ('documents', 'interviews'):
+        categories = frame.get('分类', frame.get('category', pd.Series(default_category, index=frame.index)))
+        categories = categories.map(lambda value: {'学生访谈': 'student', '教师访谈': 'teacher'}.get(str(value).strip(), str(value).strip()) or default_category)
+        if not categories.isin(['student', 'teacher']).all():
+            return jsonify(error='分类必须为 student / teacher 或学生访谈 / 教师访谈；未导入任何记录。'), 400
+        frame['category'] = categories
+    if item_type == 'interviews':
+        durations = pd.to_numeric(frame.get('时长', frame.get('duration', pd.Series(0, index=frame.index))).replace('', 0), errors='coerce')
+        if durations.isna().any() or (durations < 0).any() or (durations > 2147483647).any() or ((durations % 1) != 0).any():
+            return jsonify(error='时长必须为非负整数；未导入任何记录。'), 400
+        frame['duration'] = durations
+        dates = frame.get('访谈日期', frame.get('interview_date', pd.Series('', index=frame.index)))
+        try:
+            frame['interview_date'] = dates.map(lambda value: date.fromisoformat(str(value)[:10]) if str(value).strip() else None)
+        except ValueError:
+            return jsonify(error='访谈日期无效；未导入任何记录。'), 400
     count = 0
     for _, row in frame.iterrows():
         if item_type == "questionnaires":
@@ -857,6 +915,8 @@ def api_import_table(item_type):
                 interviewee=str(row.get("\u53d7\u8bbf\u8005", row.get("interviewee", "")) or ""),
                 interviewer=str(row.get("\u91c7\u8bbf\u8005", row.get("interviewer", "")) or ""),
                 notes=str(row.get("\u5907\u6ce8", row.get("notes", "")) or ""),
+                transcript=str(row.get('转录文本', row.get('transcript', '')) or ''),
+                category=row['category'], duration=int(row['duration']), interview_date=row['interview_date'],
             ))
         elif item_type == "documents":
             title = str(row.get("\u6807\u9898", row.get("title", "")) or "").strip()
@@ -865,6 +925,7 @@ def api_import_table(item_type):
             db.add(Document(
                 title=title,
                 description=str(row.get("\u63cf\u8ff0", row.get("description", "")) or ""),
+                category=row['category'],
             ))
         else:
             return jsonify({"error": "\u7c7b\u578b\u65e0\u6548"}), 400

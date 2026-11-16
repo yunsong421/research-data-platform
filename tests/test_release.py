@@ -326,6 +326,75 @@ class ReleaseTests(unittest.TestCase):
         db.query(self.models.Questionnaire).delete()
         db.commit()
 
+    def test_t_long_export_and_category_roundtrip(self):
+        import json
+        from datetime import date
+        from openpyxl import load_workbook
+        client = self.module.app.test_client()
+        with client.session_transaction() as session:
+            session['uid'] = 1
+        db = self.models.get_db()
+        content = json.dumps({'survey_table': {'columns': ['答案'], 'data': [['中文' * 40] for _ in range(778)]}}, ensure_ascii=False)
+        db.add(self.models.Questionnaire(title='Long roundtrip', content=content, respondent_count=778))
+        transcript = '教师访谈正文\n' * 6000
+        db.add(self.models.InterviewRecording(title='Teacher roundtrip', category='teacher',
+               transcript=transcript, duration=120, interview_date=date(2026, 11, 16)))
+        db.add(self.models.Document(title='Teacher document', category='teacher'))
+        db.commit()
+        exports = {kind: client.get('/api/export/' + kind).data for kind in ('questionnaires', 'interviews', 'documents')}
+        for kind, raw in exports.items():
+            response = client.post('/api/import/' + kind, data={'mode': 'catalog', 'file': (io.BytesIO(raw), kind + '.xlsx')})
+            self.assertEqual(response.status_code, 200, response.get_json())
+        db = self.models.get_db()
+        copies = db.query(self.models.Questionnaire).filter_by(title='Long roundtrip').all()
+        self.assertEqual(len(copies), 2)
+        self.assertTrue(all(row.content == content for row in copies))
+        self.assertTrue(all(len(self.module.questionnaire_frame(row)) == 778 for row in copies))
+        interviews = db.query(self.models.InterviewRecording).filter_by(title='Teacher roundtrip').all()
+        self.assertEqual(len(interviews), 2)
+        for row in interviews:
+            self.assertEqual((row.category, row.transcript, row.duration, row.interview_date), ('teacher', transcript, 120, date(2026, 11, 16)))
+        self.assertEqual(db.query(self.models.Document).filter_by(title='Teacher document', category='teacher').count(), 2)
+        workbook = load_workbook(io.BytesIO(exports['questionnaires']))
+        workbook['_long_text'].delete_rows(2)
+        output = io.BytesIO()
+        workbook.save(output)
+        workbook.close()
+        before = db.query(self.models.Questionnaire).count()
+        response = client.post('/api/import/questionnaires', data={'mode': 'catalog', 'file': (io.BytesIO(output.getvalue()), 'broken.xlsx')})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.models.get_db().query(self.models.Questionnaire).count(), before)
+        for model in (self.models.Questionnaire, self.models.InterviewRecording, self.models.Document):
+            self.models.get_db().query(model).delete()
+        self.models.get_db().commit()
+        output = io.BytesIO()
+        pd.DataFrame({'title': ['Uses selected category']}).to_excel(output, index=False)
+        result = client.post('/api/import/interviews', data={'category': 'teacher', 'file': (io.BytesIO(output.getvalue()), 'teacher.xlsx')})
+        self.assertEqual(result.status_code, 200, result.get_json())
+        self.assertEqual(client.get('/api/interviews').get_json()['items'][0]['category'], 'teacher')
+        self.models.get_db().query(self.models.InterviewRecording).delete()
+        self.models.get_db().commit()
+
+    def test_u_text_boundaries_and_invalid_survey(self):
+        import json
+        from local_tools import document_content
+        for encoding in ('utf-8', 'gb18030'):
+            raw = ('a' * (1024 * 1024 - 1) + '中文').encode(encoding)
+            preview = document_content(self.models.Document(file_name='boundary.txt', file_data=raw))
+            self.assertEqual(preview['kind'], 'text')
+            self.assertEqual(preview['text'], 'a' * (1024 * 1024 - 1))
+        for table in ({'columns': [], 'data': []}, {'columns': ['a'], 'data': [[{}]]},
+                      {'columns': ['a', 'a'], 'data': [[1, 2]]}, {'columns': ['a'], 'data': [[1, 2]]}):
+            with self.assertRaises(ValueError):
+                self.module.questionnaire_frame(self.models.Questionnaire(content=json.dumps({'survey_table': table})))
+        client = self.module.app.test_client()
+        with client.session_transaction() as session:
+            session['uid'] = 1
+        self.assertEqual(client.post('/api/questionnaires', json={'title': 'Overflow', 'respondent_count': 10 ** 30}).status_code, 400)
+        output = io.BytesIO()
+        pd.DataFrame({'title': ['Overflow'], 'respondent_count': [1e30]}).to_excel(output, index=False)
+        self.assertEqual(client.post('/api/import/questionnaires', data={'mode': 'catalog', 'file': (io.BytesIO(output.getvalue()), 'overflow.xlsx')}).status_code, 400)
+
     def test_z_local_backup_trash_and_preview(self):
         import sqlite3
         import zipfile

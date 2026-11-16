@@ -480,6 +480,9 @@ dialog::backdrop {
 
 /* ─── Toast ────────────────────────────────────────────────────────── */
 .toast {
+    pointer-events: none;
+    max-width: calc(100vw - 40px);
+    overflow-wrap: anywhere;
     position: fixed; top: 20px; right: 20px;
     padding: 12px 24px;
     background: var(--bg-card);
