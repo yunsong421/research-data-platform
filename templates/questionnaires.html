@@ -53,6 +53,7 @@ function loadData(page) {
         var body = document.getElementById('data-body');
         if (!d.items.length) {
             body.innerHTML = '<tr class="empty-row"><td colspan="7">\u6682\u65e0\u6570\u636e</td></tr>';
+            document.getElementById('pagination').innerHTML = '';
             return;
         }
         body.innerHTML = d.items.map(function (q) {

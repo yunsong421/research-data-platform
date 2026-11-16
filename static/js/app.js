@@ -24,6 +24,12 @@ function closeModal() {
 document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeModal();
 });
+window.addEventListener('load', function () {
+    var id = new URLSearchParams(location.search).get('highlight');
+    if (/^[1-9]\d*$/.test(id || '') && /^\/(questionnaires|interviews)$/.test(location.pathname) && typeof showView === 'function') {
+        showView(Number(id));
+    }
+});
 // Format helpers
 function fmtSize(bytes) {
     if (!bytes) return '0 B';

@@ -395,6 +395,53 @@ class ReleaseTests(unittest.TestCase):
         pd.DataFrame({'title': ['Overflow'], 'respondent_count': [1e30]}).to_excel(output, index=False)
         self.assertEqual(client.post('/api/import/questionnaires', data={'mode': 'catalog', 'file': (io.BytesIO(output.getvalue()), 'overflow.xlsx')}).status_code, 400)
 
+    def test_v_media_ranges_and_input_validation(self):
+        client = self.module.app.test_client()
+        with client.session_transaction() as session:
+            session['uid'] = 1
+        media = b'0123456789abcdef'
+        item = client.post('/api/interviews', data={'title': 'Range fixture', 'category': 'teacher',
+                           'file': (io.BytesIO(media), 'clip.mp4', 'application/octet-stream')}).get_json()['item']
+        iid = item['id']
+        self.assertEqual(item['file_type'], 'video/mp4')
+        response = client.get(f'/api/interviews/{iid}/view', headers={'Range': 'bytes=4-7'})
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.data, b'4567')
+        self.assertEqual(response.headers['Content-Range'], 'bytes 4-7/16')
+        self.assertEqual(client.get(f'/api/interviews/{iid}/view', headers={'Range': 'bytes=99-'}).status_code, 416)
+        for duration in ('-1', '1.5', '999999999999999999999'):
+            self.assertEqual(client.post('/api/interviews', data={'title': 'Bad duration', 'duration': duration}).status_code, 400)
+            self.assertEqual(client.put(f'/api/interviews/{iid}', json={'duration': duration}).status_code, 400)
+        self.assertEqual(client.post('/api/questionnaires', json={'title': 'Bad count', 'respondent_count': 1.5}).status_code, 400)
+        found = client.get('/api/search?q=Range%20fixture').get_json()['items']
+        self.assertIn('category=teacher', found[0]['_url'])
+        for model in (self.models.Questionnaire, self.models.InterviewRecording, self.models.Document):
+            self.models.get_db().query(model).delete()
+        self.models.get_db().commit()
+
+    def test_w_response_literal_and_finite_values(self):
+        import json
+        from visualizations import read_workbook
+        client = self.module.app.test_client()
+        with client.session_transaction() as session:
+            session['uid'] = 1
+        stream = io.BytesIO()
+        pd.DataFrame({'答案': ['@long-text:literal', 'NA', 'NULL']}).to_excel(stream, index=False)
+        imported = client.post('/api/import/questionnaires', data={'mode': 'responses', 'file': (io.BytesIO(stream.getvalue()), 'literal.xlsx')})
+        self.assertEqual(imported.status_code, 200, imported.get_json())
+        qid = imported.get_json()['ids'][0]
+        saved = client.get(f'/api/questionnaires/{qid}').get_json()['item']
+        self.assertEqual(json.loads(saved['content'])['survey_table']['data'], [['@long-text:literal'], ['NA'], ['NULL']])
+        for value in (float('inf'), float('nan'), 'x' * 10001):
+            with self.assertRaises(ValueError):
+                self.module.questionnaire_frame(self.models.Questionnaire(content=json.dumps({'survey_table': {'columns': ['x'], 'data': [[value]]}})))
+        stream = io.BytesIO()
+        pd.DataFrame({'答案': ['  ', '\t'], '分数': [None, None]}).to_excel(stream, index=False)
+        with self.assertRaises(ValueError):
+            read_workbook(stream.getvalue())
+        self.models.get_db().query(self.models.Questionnaire).delete()
+        self.models.get_db().commit()
+
     def test_z_local_backup_trash_and_preview(self):
         import sqlite3
         import zipfile

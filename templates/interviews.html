@@ -66,7 +66,7 @@ function loadData(page) {
     if (search) url += '&search='+encodeURIComponent(search);
     fetch(url).then(function(r){return r.json()}).then(function(d){
         var body = document.getElementById('data-body');
-        if (!d.items.length) { body.innerHTML = '<tr class="empty-row"><td colspan="8">暂无数据</td></tr>'; return; }
+        if (!d.items.length) { body.innerHTML = '<tr class="empty-row"><td colspan="8">暂无数据</td></tr>'; document.getElementById('pagination').innerHTML = ''; return; }
         body.innerHTML = d.items.map(function(i){
             var fileHtml = i.file_name ? '<span title="'+esc(i.file_name)+'">\uD83D\uDCCE '+esc((i.file_name||'').slice(0,20))+'</span>' : '<span class="text-muted">-</span>';
             var downloadBtn = i.file_name ? '<button class="btn-icon" title="下载" onclick="window.location.href=\'/api/interviews/'+i.id+'/download\'">\u2B07\uFE0F</button>' : '';
@@ -79,7 +79,6 @@ function loadData(page) {
         document.getElementById('pagination').innerHTML = pg(d.page, d.pages, d.total, 'loadData');
     });
 }
-try{loadData(1);}catch(e){}
 
 function showCreate() {
     var h = '<form id="if" enctype="multipart/form-data">';
@@ -146,6 +145,7 @@ function initCat(){
     }
 }
 initCat();
+try{loadData(1);}catch(e){}
 
 function del(id) {
     if (!confirm('确认删除此访谈？')) return;

@@ -14,12 +14,14 @@
 
 <script>
 var searchTimer = null;
+var searchRevision = 0;
 document.getElementById('search-input').addEventListener('input', function(){
     clearTimeout(searchTimer);
     searchTimer = setTimeout(doSearch, 400);
 });
 
 function doSearch() {
+    var current = ++searchRevision;
     var q = document.getElementById('search-input').value.trim();
     var results = document.getElementById('results');
     var status = document.getElementById('search-status');
@@ -30,6 +32,7 @@ function doSearch() {
     }
     status.textContent = '\u641c\u7d22\u4e2d...';
     fetch('/api/search?q=' + encodeURIComponent(q)).then(function(r){return r.json()}).then(function(d){
+        if (current !== searchRevision) return;
         if (!d.items || !d.items.length) {
             results.innerHTML = '<div class="empty-state"><div class="empty-state-icon">\uD83D\uDD0D</div><div class="empty-state-text">未找到与 "' + esc(q) + '" 相关的结果</div></div>';
             status.textContent = '';
@@ -56,13 +59,14 @@ function doSearch() {
                 html += '<div class="search-result-card" onclick="window.location.href=\'' + (item._url || '#') + '\'">';
                 html += '<div class="search-result-header"><span class="search-result-type type-badge ' + badgeClass + '">' + type + '</span><span class="search-result-title">' + esc(item.title || '') + '</span></div>';
                 if (item.description) html += '<div class="text-muted text-sm">' + esc(item.description.slice(0, 120)) + '</div>';
-                if (meta.length) html += '<div class="search-result-meta">' + meta.join(' \u00B7 ') + '</div>';
+                if (meta.length) html += '<div class="search-result-meta">' + meta.map(esc).join(' \u00B7 ') + '</div>';
                 html += '</div>';
             });
         });
         results.innerHTML = html;
         status.textContent = '';
     }).catch(function(err){
+        if (current !== searchRevision) return;
         status.textContent = '\u641c\u7d22\u51fa\u9519';
         results.innerHTML = '';
     });

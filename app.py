@@ -30,6 +30,28 @@ def attachment_name(filename):
     return (filename or '').replace('\\', '/').rsplit('/', 1)[-1] or 'upload.bin'
 
 
+def attachment_type(filename, supplied=None):
+    if not supplied or supplied.split(';', 1)[0].strip().lower() == 'application/octet-stream':
+        return mimetypes.guess_type(filename or '')[0] or 'application/octet-stream'
+    return supplied
+
+
+def nonnegative_integer(value):
+    if isinstance(value, bool) or isinstance(value, float) and not value.is_integer():
+        raise ValueError('数值须为非负整数')
+    number = int(value)
+    if not 0 <= number <= 2147483647:
+        raise ValueError('数值须为 0 到 2147483647 的整数')
+    return number
+
+
+def search_item_url(kind, item):
+    if kind == 'documents':
+        return f'/documents/{item.id}/preview'
+    category = f'category={item.category}&' if kind == 'interviews' else ''
+    return f'/{kind}?{category}highlight={item.id}'
+
+
 @app.teardown_appcontext
 def close_database_session(error=None):
     db_session.remove()
@@ -116,7 +138,7 @@ def api_create_document():
         file_data = file.read()
         if len(file_data) > MAX_FILE_SIZE: return jsonify({"error":"文件过大"}),400
         doc.file_data = file_data; doc.file_name = attachment_name(file.filename)
-        doc.file_type = file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream"
+        doc.file_type = attachment_type(file.filename, file.content_type)
         doc.file_size = len(file_data)
         if doc.file_type and doc.file_type.startswith("image/"):
             try:
@@ -142,7 +164,7 @@ def api_download_document(did):
 def api_view_document(did):
     db = get_db(); doc = db.query(Document).get(did)
     if not doc or not doc.file_data: return jsonify({"error":"文件未找到"}),404
-    return Response(doc.file_data,mimetype=doc.file_type or "application/octet-stream")
+    return send_file(io.BytesIO(doc.file_data), mimetype=attachment_type(doc.file_name, doc.file_type), conditional=True, etag=False, max_age=0)
 
 @app.route("/api/documents/<int:did>",methods=["PUT"])
 def api_update_document(did):
@@ -203,7 +225,7 @@ def api_download_interview(iid):
 def api_view_interview(iid):
     db = get_db(); i = db.query(InterviewRecording).get(iid)
     if not i or not i.file_data: return jsonify({"error":"文件未找到"}),404
-    return Response(i.file_data,mimetype=i.file_type or "application/octet-stream")
+    return send_file(io.BytesIO(i.file_data), mimetype=attachment_type(i.file_name, i.file_type), conditional=True, etag=False, max_age=0)
 
 @app.route("/tags")
 def tags_page():
@@ -252,7 +274,7 @@ def api_search():
                     item = db.query(model_cls).get(row[0])
                     if item:
                         d = item.to_dict()
-                        d["_type"] = type_name; d["_type_icon"] = icon; d["_url"] = f"/{url_part}?highlight={item.id}"
+                        d["_type"] = type_name; d["_type_icon"] = icon; d["_url"] = search_item_url(url_part, item)
                         results.append(d)
         except: pass
     if q:
@@ -264,7 +286,7 @@ def api_search():
                     if (url_part, item.id) not in seen:
                         seen.add((url_part, item.id))
                         d = item.to_dict()
-                        d["_type"] = type_name; d["_type_icon"] = icon; d["_url"] = f"/{url_part}?highlight={item.id}"
+                        d["_type"] = type_name; d["_type_icon"] = icon; d["_url"] = search_item_url(url_part, item)
                         results.append(d)
             except: pass
     return jsonify({"items":results,"query":q})
@@ -307,9 +329,10 @@ def api_detail_html(item_type, item_id):
         parts.append('<div style="white-space:pre-wrap">' + h.escape(i.transcript or i.notes or '') + '</div>')
         if i.file_name:
             parts.append("<div><a href='/api/interviews/" + str(item_id) + "/download'>download</a></div>")
-            if i.file_type and i.file_type.startswith("video/"):
+            media_type = attachment_type(i.file_name, i.file_type)
+            if media_type.startswith("video/"):
                 parts.append("<video controls src='/api/interviews/" + str(item_id) + "/view' style='max-width:100%;max-height:400px'></video>")
-            elif i.file_type and i.file_type.startswith('audio/'):
+            elif media_type.startswith('audio/'):
                 parts.append(f'<audio controls src="/api/interviews/{item_id}/view"></audio>')
         return "<br>".join(parts)
     return "invalid type"
@@ -494,9 +517,9 @@ def questionnaire_values(data):
     if not isinstance(data, dict) or not isinstance(data.get('title'), str) or not data['title'].strip():
         raise ValueError('标题不能为空')
     try:
-        count = int(data.get('respondent_count', 0))
+        count = nonnegative_integer(data.get('respondent_count', 0))
         tags = list({int(value) for value in data.get('tag_ids', [])})
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         raise ValueError('回答数或标签格式无效')
     if not 0 <= count <= 2147483647:
         raise ValueError('回答数须为 0 到 2147483647 的整数')
@@ -598,7 +621,7 @@ def api_create_interview():
     iv.interviewer = request.form.get('interviewer', '')
     iv.transcript = request.form.get('transcript', '')
     try:
-        iv.duration = int(request.form.get('duration') or 0)
+        iv.duration = nonnegative_integer(request.form.get('duration') or 0)
         iv.interview_date = date.fromisoformat(request.form['interview_date']) if request.form.get('interview_date') else None
     except ValueError:
         return jsonify(error='日期或时长格式无效'), 400
@@ -606,8 +629,8 @@ def api_create_interview():
     if file and file.filename:
         file_data = file.read()
         if len(file_data) > 50*1024*1024: return jsonify({"error":"文件过大"}),400
-        iv.file_data = file_data; iv.file_name = file.filename
-        iv.file_type = file.content_type or "application/octet-stream"
+        iv.file_data = file_data; iv.file_name = attachment_name(file.filename)
+        iv.file_type = attachment_type(file.filename, file.content_type)
         iv.file_size = len(file_data)
     db.add(iv)
     db.flush()
@@ -662,6 +685,10 @@ def api_update_interview(iid):
         return jsonify({"error": "\u672a\u627e\u5230"}), 404
     data = request.get_json(silent=True) if request.is_json else request.form
     data = data or {}
+    try:
+        duration = nonnegative_integer(data['duration'] or 0) if 'duration' in data else item.duration
+    except (ValueError, TypeError, OverflowError):
+        return jsonify(error='时长须为 0 到 2147483647 的整数'), 400
     if data.get('category') in ('student', 'teacher'):
         item.category = data['category']
     if 'interview_date' in data:
@@ -682,7 +709,7 @@ def api_update_interview(iid):
             if field in data:
                 setattr(item, field, data.get(field, ""))
         if "duration" in data:
-            item.duration = data.get("duration") or 0
+            item.duration = duration
         if "interview_date" in data:
             try:
                 item.interview_date = date.fromisoformat(data["interview_date"])
@@ -695,7 +722,7 @@ def api_update_interview(iid):
             if field in request.form:
                 setattr(item, field, request.form.get(field, ""))
         if "duration" in request.form:
-            item.duration = request.form.get("duration", 0, type=int)
+            item.duration = duration
         upload = request.files.get("file")
         if upload and upload.filename:
             blob = upload.read()
@@ -703,7 +730,7 @@ def api_update_interview(iid):
                 return jsonify({"error": "\u6587\u4ef6\u8fc7\u5927"}), 400
             item.file_data = blob
             item.file_name = attachment_name(upload.filename)
-            item.file_type = upload.content_type or mimetypes.guess_type(upload.filename)[0] or "application/octet-stream"
+            item.file_type = attachment_type(upload.filename, upload.content_type)
             item.file_size = len(blob)
     db.commit()
     return jsonify({"item": item.to_dict()})
@@ -725,7 +752,7 @@ def _store_upload(db, upload, force_kind=None, category="student"):
     blob = upload.read()
     if not blob or len(blob) > MAX_FILE_SIZE:
         return None
-    ctype = upload.content_type or mimetypes.guess_type(upload.filename)[0] or "application/octet-stream"
+    ctype = attachment_type(upload.filename, upload.content_type)
     is_media = ctype.startswith("audio/") or ctype.startswith("video/")
     title = os.path.splitext(upload.filename)[0]
     safe_name = attachment_name(upload.filename)
@@ -811,7 +838,9 @@ def api_import_table(item_type):
         frame = pd.read_excel(io.BytesIO(raw), keep_default_na=False).dropna(how='all').fillna('')
         frame.columns = [str(column).strip() for column in frame.columns]
         # Excel cells hold at most 32767 characters; exported long fields live in chunks.
-        references = {value for column in frame for value in frame[column]
+        responses = item_type == 'questionnaires' and (request.form.get('mode') == 'responses'
+                    or request.form.get('mode', 'auto') == 'auto' and '标题' not in frame and 'title' not in frame)
+        references = set() if responses else {value for column in frame for value in frame[column]
                       if isinstance(value, str) and value.startswith('@long-text:')}
         if references:
             chunks = pd.read_excel(io.BytesIO(raw), sheet_name='_long_text', dtype=str, keep_default_na=False).fillna('')

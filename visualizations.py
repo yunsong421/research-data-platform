@@ -78,9 +78,6 @@ def read_workbook(raw):
             for row in rows:
                 if all(value is None for value in row):
                     continue
-                total_rows += 1
-                if total_rows > MAX_ROWS:
-                    raise ValueError('每个工作簿最多支持 10000 条非空数据，请拆分后上传。')
                 values = []
                 for value in row[:len(columns)]:
                     if isinstance(value, (date, datetime)):
@@ -92,6 +89,11 @@ def read_workbook(raw):
                             raise ValueError('单元格文本过长，请精简后上传。')
                         value = value.strip() or None
                     values.append(value)
+                if all(value is None for value in values):
+                    continue
+                total_rows += 1
+                if total_rows > MAX_ROWS:
+                    raise ValueError('每个工作簿最多支持 10000 条非空数据，请拆分后上传。')
                 records.append(values)
             if records:
                 result.append((sheet.title, pd.DataFrame(records, columns=columns)))
@@ -120,7 +122,9 @@ def questionnaire_frame(item):
                 or any(not isinstance(name, str) or not name.strip() for name in columns)
                 or len(set(columns)) != len(columns)
                 or any(not isinstance(row, list) or len(row) != len(columns)
-                       or any(value is not None and not isinstance(value, (str, int, float, bool)) for value in row)
+                       or any(value is not None and not isinstance(value, (str, int, float, bool))
+                              or isinstance(value, float) and not math.isfinite(value)
+                              or isinstance(value, str) and len(value) > 10000 for value in row)
                        for row in rows)):
             raise ValueError('问卷表头或答卷结构无效。')
         return pd.DataFrame(table['data'], columns=table['columns'])
