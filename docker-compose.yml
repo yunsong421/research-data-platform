@@ -1,0 +1,15 @@
+services:
+  data-platform:
+    build: .
+    image: data-platform:latest
+    container_name: data-platform
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 5000
+      DATA_DIR: /app/data
+    volumes:
+      # keeps the SQLite database (documents + videos) outside the container
+      - ./data:/app/data
