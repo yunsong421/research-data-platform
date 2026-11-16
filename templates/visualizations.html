@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block title %}自定义可视化 - 数据管理平台{% endblock %}
+{% block page_title %}自定义可视化{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/visualizations.css') }}">{% endblock %}
+{% block content %}
+<div class="viz-page">
+    <div id="viz-status" role="status" aria-live="polite"></div>
+    <section class="viz-sources" aria-label="数据来源">
+        <form id="upload-form" class="viz-upload">
+            <label for="upload-file">Excel 工作簿</label>
+            <input id="upload-file" name="file" type="file" accept=".xlsx" required>
+            <button type="submit" class="btn btn-outline" id="upload-button">上传数据</button>
+        </form>
+        <div class="viz-dataset-row">
+            <label for="dataset">数据集</label>
+            <select id="dataset" class="form-control"><option value="">暂无数据集</option></select>
+            <button type="button" class="btn btn-outline" id="refresh-data">刷新</button>
+            <button type="button" class="btn btn-danger" id="delete-data" disabled>删除数据集</button>
+        </div>
+        <p id="dataset-summary"></p>
+    </section>
+    <div class="viz-workspace">
+        <form id="chart-form" class="viz-controls">
+            <fieldset id="chart-fields" disabled>
+                <legend>图表配置</legend>
+                <button type="button" class="btn btn-outline" id="recommend">自动选择</button>
+                <label for="chart-type">图表类型</label>
+                <select id="chart-type" class="form-control">
+                    <option value="barh">横向条形图</option><option value="bar">柱状图</option>
+                    <option value="pie">饼图</option><option value="line">折线图</option>
+                    <option value="histogram">直方图</option><option value="scatter">散点图</option>
+                </select>
+                <label for="x-field">横轴 / 分类字段</label><select id="x-field" class="form-control" required></select>
+                <div id="aggregation-wrap"><label for="aggregation">统计方式</label>
+                    <select id="aggregation" class="form-control"><option value="count">记录数</option><option value="mean">平均值</option><option value="sum">合计</option></select>
+                </div>
+                <div id="y-wrap" hidden><label for="y-field">数值字段</label><select id="y-field" class="form-control"></select></div>
+                <div id="top-wrap"><label for="top-count">最多显示类别数</label><input id="top-count" class="form-control" type="number" min="1" max="30" value="12" required></div>
+                <div id="bins-wrap" hidden><label for="bin-count">直方图分箱数</label><input id="bin-count" class="form-control" type="number" min="3" max="50" value="15" required></div>
+                <label for="chart-title">图表标题</label><input id="chart-title" class="form-control" maxlength="120" placeholder="自动命名">
+                <button type="submit" class="btn btn-primary" id="generate">生成图表</button>
+            </fieldset>
+        </form>
+        <section class="viz-result" aria-label="图表预览">
+            <div class="viz-result-header"><h2>图表预览</h2><a id="download-chart" class="btn btn-outline" download="chart.png" hidden>下载 PNG</a></div>
+            <p id="chart-empty">暂无图表</p>
+            <img id="chart-image" alt="" hidden>
+            <p id="chart-statistics" aria-live="polite"></p>
+            <details id="result-details" hidden><summary>图表数据</summary><div id="result-table" class="viz-table-scroll"></div></details>
+        </section>
+    </div>
+    <section class="viz-preview" aria-label="数据预览">
+        <h2>数据预览 <span id="preview-count"></span></h2>
+        <div id="preview-table" class="viz-table-scroll"><p>暂无数据</p></div>
+    </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/visualizations.js') }}"></script>{% endblock %}

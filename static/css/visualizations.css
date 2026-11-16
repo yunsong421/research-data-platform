@@ -1,0 +1,43 @@
+.main-content { min-width: 0; }
+.viz-page { min-width: 0; letter-spacing: 0; }
+.viz-page [hidden] { display: none !important; }
+.viz-page h2, .viz-page legend { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.viz-page label { font-size: 13px; color: var(--text-primary); }
+#viz-status { min-height: 28px; margin-bottom: 12px; overflow-wrap: anywhere; color: #91e4ce; }
+#viz-status.error { color: #ff9bac; }
+.viz-sources { border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+.viz-upload, .viz-dataset-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.viz-upload input { flex: 1; min-width: 0; max-width: 500px; color: var(--text-primary); }
+.viz-upload input::file-selector-button { padding: 8px; background: #253341; color: white; border: 1px solid var(--border); border-radius: 4px; margin-right: 10px; }
+.viz-dataset-row select { flex: 1; min-width: 180px; width: auto; }
+#dataset-summary, #preview-count, #chart-statistics { color: #aebcd0; font-size: 13px; overflow-wrap: anywhere; }
+.viz-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 24px; margin: 24px 0; align-items: start; }
+.viz-controls { border-right: 1px solid var(--border); padding-right: 24px; }
+.viz-controls fieldset { min-width: 0; border: 0; }
+.viz-controls label { display: block; margin: 16px 0 6px; }
+.viz-controls .form-control { width: 100%; min-width: 0; height: 40px; text-overflow: ellipsis; padding: 8px; }
+.viz-page select option { background: #16202a; color: white; }
+.viz-controls button { width: 100%; margin-top: 18px; }
+.viz-page button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.viz-result { min-width: 0; }
+.viz-result-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 42px; margin-bottom: 12px; flex-wrap: wrap; }
+#chart-empty { display: grid; place-items: center; min-height: 300px; border: 1px dashed var(--border); color: #aebcd0; }
+#chart-image { display: block; width: 100%; height: auto; background: white; border-radius: 4px; }
+#chart-statistics { margin: 12px 0; }
+.viz-preview { border-top: 1px solid var(--border); padding-top: 20px; min-width: 0; }
+.viz-preview h2 { margin-bottom: 12px; }
+.viz-table-scroll { overflow: auto; max-width: 100%; max-height: 360px; margin-top: 12px; }
+.viz-page table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.viz-page td, .viz-page th { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; min-width: 120px; max-width: 280px; overflow-wrap: anywhere; }
+.viz-page th { color: #91e4ce; position: sticky; top: 0; background: #14252c; }
+.viz-page details summary { cursor: pointer; color: var(--primary); }
+@media (max-width: 1100px) { .viz-workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 16px; } }
+@media (max-width: 800px) {
+    .viz-workspace { grid-template-columns: minmax(0, 1fr); }
+    .viz-controls { border-right: 0; padding-right: 0; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+    .viz-upload, .viz-dataset-row { align-items: stretch; }
+    .viz-dataset-row label, .viz-upload label { flex-basis: 100%; }
+    .viz-dataset-row select, .viz-upload input { flex-basis: 100%; width: 100%; max-width: 100%; }
+    .viz-page .btn { white-space: normal; }
+    #chart-empty { min-height: 200px; }
+}

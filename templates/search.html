@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}全文检索 - 数据管理平台{% endblock %}
+{% block page_title %}全文检索{% endblock %}
+{% block content %}
+<div class="search-page-bar">
+    <div style="display:flex;gap:8px">
+        <input type="text" id="search-input" class="form-control" placeholder="输入关键词搜索问卷、访谈记录、文档..." style="font-size:16px;padding:12px 16px" onkeydown="if(event.key==='Enter')doSearch()">
+        <button class="btn btn-primary btn-lg" onclick="doSearch()">搜索</button>
+    </div>
+    <div class="text-muted text-sm" style="margin-top:8px;text-align:center">支持全文检索：问卷标题/内容、访谈记录记录/文稿、文档标题/描述</div>
+</div>
+<div id="results"></div>
+<div id="search-status" class="text-muted" style="text-align:center;padding:20px">输入关键词开始搜索</div>
+
+<script>
+var searchTimer = null;
+document.getElementById('search-input').addEventListener('input', function(){
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, 400);
+});
+
+function doSearch() {
+    var q = document.getElementById('search-input').value.trim();
+    var results = document.getElementById('results');
+    var status = document.getElementById('search-status');
+    if (!q || q.length < 1) {
+        results.innerHTML = '';
+        status.textContent = '\u8bf7\u8f93\u5165\u5173\u952e\u8bcd\u5f00\u59cb\u641c\u7d22';
+        return;
+    }
+    status.textContent = '\u641c\u7d22\u4e2d...';
+    fetch('/api/search?q=' + encodeURIComponent(q)).then(function(r){return r.json()}).then(function(d){
+        if (!d.items || !d.items.length) {
+            results.innerHTML = '<div class="empty-state"><div class="empty-state-icon">\uD83D\uDD0D</div><div class="empty-state-text">未找到与 "' + esc(q) + '" 相关的结果</div></div>';
+            status.textContent = '';
+            return;
+        }
+        var byType = {};
+        d.items.forEach(function(item){
+            var t = item._type || '\u5176\u4ed6';
+            if (!byType[t]) byType[t] = [];
+            byType[t].push(item);
+        });
+        var html = '<div style="margin-bottom:12px;color:var(--text-muted)">\u5171\u627e\u5230 ' + d.items.length + ' \u6761\u7ed3\u679c</div>';
+        Object.keys(byType).forEach(function(type){
+            var items = byType[type];
+            var icon = items[0]._type_icon || '\uD83D\uDCC4';
+            var badgeClass = type === '\u95ee\u5377' ? 'q' : type === '\u8bbf\u8c08' ? 'i' : 'd';
+            html += '<h3 style="font-size:15px;margin:16px 0 8px;display:flex;align-items:center;gap:6px">' + icon + ' ' + type + ' <span class="text-muted text-sm">(' + items.length + ')</span></h3>';
+            items.forEach(function(item){
+                var meta = [];
+                if (item.respondent_count !== undefined) meta.push('\u56de\u7b54: ' + item.respondent_count);
+                if (item.interviewee) meta.push('\u53d7\u8bbf: ' + item.interviewee);
+                if (item.file_name) meta.push(item.file_name);
+                if (item.tags && item.tags.length) meta.push(item.tags.map(function(t){return t.name}).join(', '));
+                html += '<div class="search-result-card" onclick="window.location.href=\'' + (item._url || '#') + '\'">';
+                html += '<div class="search-result-header"><span class="search-result-type type-badge ' + badgeClass + '">' + type + '</span><span class="search-result-title">' + esc(item.title || '') + '</span></div>';
+                if (item.description) html += '<div class="text-muted text-sm">' + esc(item.description.slice(0, 120)) + '</div>';
+                if (meta.length) html += '<div class="search-result-meta">' + meta.join(' \u00B7 ') + '</div>';
+                html += '</div>';
+            });
+        });
+        results.innerHTML = html;
+        status.textContent = '';
+    }).catch(function(err){
+        status.textContent = '\u641c\u7d22\u51fa\u9519';
+        results.innerHTML = '';
+    });
+}
+
+// Auto search from URL params
+var params = new URLSearchParams(window.location.search);
+var q = params.get('q');
+if (q) {
+    document.getElementById('search-input').value = q;
+    doSearch();
+}
+</script>
+{% endblock %}

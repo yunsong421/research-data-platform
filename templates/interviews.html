@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}访谈记录 - 数据管理平台{% endblock %}
+{% block page_title %}访谈记录{% endblock %}
+{% block header_actions %}
+<button class="btn btn-primary" onclick="showCreate()">+ 新建访谈</button>
+<button class="btn btn-outline btn-sm" onclick="exportData('interviews')">导出</button>
+<button class="btn btn-outline btn-sm" onclick="showImport('interviews')">导入</button>
+<button class="btn btn-outline btn-sm" onclick="showBatchImport()">批量导入文件</button>
+{% endblock %}
+{% block content %}
+<div class="tabs">
+    <button class="tab active" data-cat="student" onclick="switchCat(this,'student')">学生访谈</button>
+    <button class="tab" data-cat="teacher" onclick="switchCat(this,'teacher')">教师访谈</button>
+</div>
+<div class="filter-bar">
+    <select id="tag-filter" onchange="loadData(1)"><option value="">全部标签</option></select>
+    <div class="search-bar">
+        <input type="text" id="search-input" placeholder="搜索标题/受访者..." onkeydown="if(event.key==='Enter')loadData(1)">
+        <button class="btn btn-primary btn-sm" onclick="loadData(1)">搜索</button>
+    </div>
+</div>
+<div class="table-container"><table class="data-table"><thead><tr>
+    <th>ID</th><th>标题</th><th>受访者</th><th>采访者</th><th>文件</th><th>标签</th><th>创建时间</th><th>操作</th>
+</tr></thead><tbody id="data-body">
+{% for i in interviews %}
+<tr>
+<td>{{ i.id }}</td>
+<td><strong>{{ i.title }}</strong></td>
+<td>{{ i.interviewee or '-' }}</td>
+<td>{{ i.interviewer or '-' }}</td>
+<td class="text-sm">{{ i.file_name or '-' }}</td>
+<td></td>
+<td class="text-sm">{{ i.created_at[:16].replace("T"," ") if i.created_at else '-' }}</td>
+<td class="actions-cell"><button class="btn-icon" title="查看" onclick="showView({{ i.id }})">📋</button></td>
+</tr>
+{% endfor %}
+</tbody></table></div>
+<div id="pagination" class="pagination"></div>
+
+<script>
+var activeCat = 'student';
+function catSel(id){
+    return '<div class="form-group"><label>所属分类</label>'+
+        '<select class="form-control" name="category" id="'+id+'">'+
+        '<option value="student">学生访谈</option>'+
+        '<option value="teacher">教师访谈</option>'+
+        '</select></div>';
+}
+function switchCat(el, cat){
+    activeCat = cat;
+    var tabs = document.querySelectorAll('.tab');
+    for (var i=0;i<tabs.length;i++) tabs[i].classList.remove('active');
+    el.classList.add('active');
+    try{loadData(1);}catch(e){}
+}
+function showInlineModal(t,h){var o=document.getElementById("modal-dialog");document.getElementById("dialog-title").textContent=t;document.getElementById("dialog-body").innerHTML=h;o.showModal();}
+
+var tags = {{ tags|tojson }};
+try{loadTagFilter('tag-filter');}catch(e){}
+
+function loadData(page) {
+    var tagId = document.getElementById('tag-filter').value;
+    var search = document.getElementById('search-input').value;
+    var url = '/api/interviews?page='+page+'&per_page=20&category='+activeCat;
+    if (tagId) url += '&tag_id='+tagId;
+    if (search) url += '&search='+encodeURIComponent(search);
+    fetch(url).then(function(r){return r.json()}).then(function(d){
+        var body = document.getElementById('data-body');
+        if (!d.items.length) { body.innerHTML = '<tr class="empty-row"><td colspan="8">暂无数据</td></tr>'; return; }
+        body.innerHTML = d.items.map(function(i){
+            var fileHtml = i.file_name ? '<span title="'+esc(i.file_name)+'">\uD83D\uDCCE '+esc((i.file_name||'').slice(0,20))+'</span>' : '<span class="text-muted">-</span>';
+            var downloadBtn = i.file_name ? '<button class="btn-icon" title="下载" onclick="window.location.href=\'/api/interviews/'+i.id+'/download\'">\u2B07\uFE0F</button>' : '';
+            return '<tr><td>'+i.id+'</td><td><strong>'+esc(i.title)+'</strong></td><td>'+esc(i.interviewee||'-')+'</td><td>'+esc(i.interviewer||'-')+'</td><td>'+fileHtml+'</td><td>'+tagBar(i.tags)+'</td><td class="text-sm">'+fmtDate(i.created_at)+'</td><td class="actions-cell">' +
+                '<button class="btn-icon" title="查看" onclick="showView('+i.id+')">\uD83D\uDCCB</button>' +
+                '<button class="btn-icon" title="编辑" onclick="showEdit('+i.id+')">\u270F\uFE0F</button>' +
+                downloadBtn +
+                '<button class="btn-icon" title="删除" onclick="del('+i.id+')">\uD83D\uDDD1\uFE0F</button></td></tr>';
+        }).join('');
+        document.getElementById('pagination').innerHTML = pg(d.page, d.pages, d.total, 'loadData');
+    });
+}
+try{loadData(1);}catch(e){}
+
+function showCreate() {
+    var h = '<form id="if" enctype="multipart/form-data">';
+    h += catSel('create-cat');
+    h += '<div class="form-row">';
+    h += '<div class="form-group"><label>标题 *</label><input class="form-control" name="title" required></div>';
+    h += '<div class="form-group"><label>访谈日期</label><input class="form-control" name="interview_date" type="date"></div></div>';
+    h += '<div class="form-row"><div class="form-group"><label>受访者</label><input class="form-control" name="interviewee"></div>';
+    h += '<div class="form-group"><label>采访者</label><input class="form-control" name="interviewer"></div></div>';
+    h += '<div class="form-group"><label>备注</label><textarea class="form-control" name="notes"></textarea></div>';
+    h += '<div class="form-group"><label>录音文件</label><div class="dropzone" id="create-dropzone"><div class="dropzone-icon">\uD83C\uDFA4</div><div class="dropzone-text">点击或拖拽上传录音文件</div></div><input type="file" id="create-file-input" name="file" accept="video/*,audio/*" style="display:none"><div id="create-file-preview"></div></div>';
+    h += '<div class="form-group"><label>时长（秒）</label><input class="form-control" name="duration" type="number" value="0"></div>';
+    h += '<div class="form-group"><label>标签</label>'+tagSelect(tags,[])+'</div>';
+    h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">创建</button></div></form>';
+    openModal('新建访谈', h);
+    document.getElementById('create-cat').value = activeCat;
+    setupDrop('create-dropzone', 'create-file-input', 'create-file-preview');
+    document.getElementById('if').addEventListener('submit', function(e){
+        e.preventDefault();
+        var fd = new FormData(this);
+        getTagIds(this).forEach(function(id){fd.append('tag_ids[]',id)});
+        fetch('/api/interviews', {method:'POST', body:fd}).then(function(r){return r.json()}).then(function(d){
+            if (d.item) { showToast('创建成功','success'); closeModal(); try{loadData(1);}catch(e){} }
+            else { showToast(d.error||'创建失败','error'); }
+        });
+    });
+}
+
+function showEdit(id) {
+    fetch('/api/interviews/' + id).then(function(r){return r.json()}).then(function(result){
+        var item = result.item;
+        if (!item) return;
+        var h = '<form id="if" enctype="multipart/form-data"><div class="form-row">';
+        h += '<div class="form-group"><label>标题</label><input class="form-control" name="title" value="'+esc(item.title)+'"></div>';
+        h += '<div class="form-group"><label>访谈日期</label><input class="form-control" name="interview_date" type="date" value="'+(item.interview_date||'')+'"></div></div>';
+        h += '<div class="form-row"><div class="form-group"><label>受访者</label><input class="form-control" name="interviewee" value="'+esc(item.interviewee||'')+'"></div>';
+        h += '<div class="form-group"><label>采访者</label><input class="form-control" name="interviewer" value="'+esc(item.interviewer||'')+'"></div></div>';
+        h += '<div class="form-group"><label>备注</label><textarea class="form-control" name="notes">'+esc(item.notes||'')+'</textarea></div>';
+        h += '<div class="form-group"><label>时长（秒）</label><input class="form-control" name="duration" type="number" value="'+item.duration+'"></div>';
+        h += '<div class="form-group"><label>标签</label>'+tagSelect(tags, (item.tags||[]).map(function(t){return t.id}))+'</div>';
+        h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">保存</button></div></form>';
+        openModal('编辑访谈 #'+id, h);
+        document.getElementById('if').addEventListener('submit', function(e){
+            e.preventDefault();
+            var fd = new FormData(this);
+            getTagIds(this).forEach(function(id){fd.append('tag_ids[]',id)});
+            fetch('/api/interviews/'+id, {method:'PUT', body:fd}).then(function(r){return r.json()}).then(function(d){
+                if (d.item) { showToast('保存成功','success'); closeModal(); try{loadData(1);}catch(e){} }
+                else { showToast(d.error||'保存失败','error'); }
+            });
+        });
+    });
+}
+
+function showView(id) {
+    fetch('/api/detail/interviews/' + id).then(function(r){return r.text()}).then(function(h){showInlineModal('访谈记录详情 #' + id, h)});
+}
+function initCat(){
+    var m = /[?&]category=(student|teacher)/.exec(location.search);
+    if (m) {
+        activeCat = m[1];
+        var tabs = document.querySelectorAll('.tab');
+        for (var i=0;i<tabs.length;i++) tabs[i].classList.toggle('active', tabs[i].getAttribute('data-cat')===activeCat);
+    }
+}
+initCat();
+
+function del(id) {
+    if (!confirm('确认删除此访谈？')) return;
+    fetch('/api/interviews/'+id, {method:'DELETE'}).then(function(r){return r.json()}).then(function(d){
+        if (d.ok) { showToast('删除成功','success'); try{loadData(1);}catch(e){} }
+        else { showToast(d.error||'删除失败','error'); }
+    });
+}
+
+function showBatchImport() {
+    var h = '<form id="bf" enctype="multipart/form-data">';
+    h += catSel('batch-cat');
+    h += '<div class="form-group"><label>选择视频/音频文件（可多选）</label>';
+    h += '<div class="dropzone" id="batch-dropzone"><div class="dropzone-icon">\uD83D\uDCC1</div><div class="dropzone-text">点击或拖拽文件到此处</div><div class="dropzone-hint">支持 MP4, AVI, MOV 等视频格式</div></div>';
+    h += '<input type="file" id="batch-file-input" name="files[]" multiple accept="video/*,audio/*" style="display:none">';
+    h += '<div id="batch-file-preview"></div></div>';
+    h += '<input type="hidden" name="type" value="interviews">';
+    h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button><button type="submit" class="btn btn-primary">批量导入</button></div></form>';
+    openModal('批量导入视频文件', h);
+    document.getElementById('batch-cat').value = activeCat;
+    setupDrop('batch-dropzone', 'batch-file-input', 'batch-file-preview');
+    document.getElementById('bf').addEventListener('submit', function(e){
+        e.preventDefault();
+        var fd = new FormData(this);
+        fetch('/api/batch-import-files', {method:'POST', body:fd}).then(function(r){return r.json()}).then(function(d){
+            if (d.ok) { showToast('成功导入 '+d.count+' 个文件','success'); closeModal(); try{loadData(1);}catch(e){} }
+            else { showToast(d.error||'导入失败','error'); }
+        });
+    });
+}
+</script>
+{% endblock %}

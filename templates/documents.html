@@ -1,0 +1,298 @@
+{% extends "base.html" %}
+{% block title %}文档 - 数据管理平台{% endblock %}
+{% block page_title %}文档{% endblock %}
+{% block header_actions %}
+<button class="btn btn-primary" onclick="showCreate()">+ 上传文件</button>
+<button class="btn btn-outline btn-sm" onclick="exportData('documents')">导出</button>
+<button class="btn btn-outline btn-sm" onclick="showImport('documents')">导入</button>
+<button class="btn btn-outline btn-sm" onclick="showBatch()">批量导入文件</button>
+{% endblock %}
+{% block content %}
+<div class="tabs">
+    <button class="tab active" data-cat="student" onclick="switchCat(this,'student')">学生访谈</button>
+    <button class="tab" data-cat="teacher" onclick="switchCat(this,'teacher')">教师访谈</button>
+</div>
+
+<div class="filter-bar">
+    <select id="tag-filter" onchange="loadData(1)"><option value="">全部标签</option></select>
+    <div class="search-bar">
+        <input type="text" id="search-input" placeholder="搜索标题..." onkeydown="if(event.key==='Enter')loadData(1)">
+        <button class="btn btn-primary btn-sm" onclick="loadData(1)">搜索</button>
+    </div>
+</div>
+
+<div class="table-container"><table class="data-table"><thead><tr>
+    <th>ID</th><th>标题</th><th>文件</th><th>大小</th><th>标签</th><th>创建时间</th><th>操作</th>
+</tr></thead><tbody id="data-body">
+{% for d in documents %}
+<tr>
+<td>{{ d.id }}</td>
+<td><strong>{{ d.title }}</strong></td>
+<td class="text-sm">📎 {{ d.file_name }}</td>
+<td class="text-sm">{{ (d.file_size / 1024) | round(1) }} KB</td>
+<td></td>
+<td class="text-sm">{{ d.created_at[:16].replace("T", " ") if d.created_at else "-" }}</td>
+<td class="actions-cell">
+    <button class="btn-icon" title="查看" onclick="showView({{ d.id }})">📋</button>
+    <button class="btn-icon" title="编辑" onclick="showEdit({{ d.id }})">✏️</button>
+    <button class="btn-icon" title="下载" onclick="window.location.href='/api/documents/{{ d.id }}/download'">⬇️</button>
+    <button class="btn-icon" title="删除" onclick="del({{ d.id }})">🗑️</button>
+</td>
+</tr>
+{% endfor %}
+</tbody></table></div>
+<div id="pagination" class="pagination"></div>
+
+<script>
+var activeCat = 'student';
+var tags = {{ tags|tojson }};
+
+function showInlineModal(t, h) {
+    document.getElementById("dialog-title").textContent = t;
+    document.getElementById("dialog-body").innerHTML = h;
+    document.getElementById("modal-dialog").showModal();
+}
+
+function switchCat(el, cat) {
+    activeCat = cat;
+    var tabs = document.querySelectorAll('.tab');
+    for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
+    el.classList.add('active');
+    try { loadData(1); } catch (e) {}
+}
+
+function loadData(page) {
+    var tagId = document.getElementById('tag-filter').value;
+    var search = document.getElementById('search-input').value;
+    var url = '/api/documents?page=' + page + '&per_page=20&category=' + activeCat;
+    if (tagId) url += '&tag_id=' + tagId;
+    if (search) url += '&search=' + encodeURIComponent(search);
+    fetch(url).then(function (r) { return r.json() }).then(function (d) {
+        var body = document.getElementById('data-body');
+        if (!d.items.length) {
+            body.innerHTML = '<tr class="empty-row"><td colspan="7">暂无数据</td></tr>';
+            document.getElementById('pagination').innerHTML = '';
+            return;
+        }
+        body.innerHTML = d.items.map(function (x) {
+            var kb = x.file_size ? (x.file_size / 1024).toFixed(1) + ' KB' : '-';
+            return '<tr><td>' + x.id + '</td>' +
+                '<td><strong>' + esc(x.title) + '</strong></td>' +
+                '<td class="text-sm">📎 ' + esc(x.file_name || '-') + '</td>' +
+                '<td class="text-sm">' + kb + '</td>' +
+                '<td>' + tagBar(x.tags) + '</td>' +
+                '<td class="text-sm">' + fmtDate(x.created_at) + '</td>' +
+                '<td class="actions-cell">' +
+                    '<button class="btn-icon" title="查看" onclick="showView(' + x.id + ')">📋</button>' +
+                    '<button class="btn-icon" title="编辑" onclick="showEdit(' + x.id + ')">✏️</button>' +
+                    '<button class="btn-icon" title="下载" onclick="window.location.href=\'/api/documents/' + x.id + '/download\'">⬇️</button>' +
+                    '<button class="btn-icon" title="删除" onclick="del(' + x.id + ')">🗑️</button>' +
+                '</td></tr>';
+        }).join('');
+        document.getElementById('pagination').innerHTML = pg(d.page, d.pages, d.total, 'loadData');
+    });
+}
+
+function catSel(id) {
+    return '<div class="form-group"><label>所属分类</label>' +
+        '<select class="form-control" name="category" id="' + id + '">' +
+        '<option value="student">学生访谈</option>' +
+        '<option value="teacher">教师访谈</option>' +
+        '</select></div>';
+}
+
+function showView(id) {
+    fetch('/api/detail/documents/' + id).then(function (r) { return r.text() }).then(function (h) {
+        showInlineModal('文档详情 #' + id, h);
+    });
+}
+
+function editForm(doc) {
+    var h = '<form id="ef">';
+    h += catSel('edit-cat');
+    h += '<div class="form-group"><label>标题</label><input class="form-control" name="title" value="' + esc(doc.title) + '"></div>';
+    h += '<div class="form-group"><label>描述</label><textarea class="form-control" name="description">' + esc(doc.description || '') + '</textarea></div>';
+    h += '<div class="form-group"><label>标签</label>' + tagSelect(tags, (doc.tags || []).map(function (t) { return t.id })) + '</div>';
+    h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>';
+    h += '<button type="submit" class="btn btn-primary">保存</button></div></form>';
+    return h;
+}
+
+function showEdit(id) {
+    fetch('/api/documents/' + id)
+        .then(function (r) { return r.json() }).then(function (result) {
+            var doc = result.item;
+            if (!doc) { showToast('未找到该文档', 'error'); return; }
+            openModal('编辑文档 #' + id, editForm(doc));
+            document.getElementById('edit-cat').value = doc.category || 'student';
+            document.getElementById('ef').addEventListener('submit', function (e) {
+                e.preventDefault();
+                var data = {
+                    title: this.title.value,
+                    description: this.description.value,
+                    category: document.getElementById('edit-cat').value,
+                    tag_ids: getTagIds(this)
+                };
+                fetch('/api/documents/' + id, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                }).then(function (r) { return r.json() }).then(function (d) {
+                    if (d.item) {
+                        showToast('保存成功', 'success');
+                        closeModal();
+                        setTimeout(function () { loadData(1); }, 200);
+                    } else {
+                        showToast(d.error || '保存失败', 'error');
+                    }
+                });
+            });
+        });
+}
+
+function del(id) {
+    if (!confirm('确认删除此文档？删除后无法恢复。')) return;
+    fetch('/api/documents/' + id, { method: 'DELETE' }).then(function (r) { return r.json() }).then(function (d) {
+        if (d.ok) {
+            showToast('删除成功', 'success');
+            try { loadData(1); } catch (e) {}
+        } else {
+            showToast(d.error || '删除失败', 'error');
+        }
+    });
+}
+
+function dropzoneHtml(id, label) {
+    return '<div class="form-group"><label>' + label + '</label>' +
+        '<div class="dropzone" id="' + id + '">' +
+        '<div class="dropzone-icon">📁</div>' +
+        '<div class="dropzone-text">点击选择文件，或把文件拖到这里</div>' +
+        '<div class="dropzone-hint">支持图片、PDF、Word、Excel、音视频，单个最大 50 MB</div>' +
+        '</div><div id="' + id + '-info" class="file-preview" style="display:none"></div></div>';
+}
+
+function wireDropzone(zoneId, inputId) {
+    var zone = document.getElementById(zoneId);
+    var input = document.getElementById(inputId);
+    if (!zone || !input) return;
+    function showInfo() {
+        var box = document.getElementById(zoneId + '-info');
+        var names = [];
+        for (var i = 0; i < input.files.length; i++) names.push(input.files[i].name);
+        if (!names.length) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        box.textContent = '已选 ' + names.length + ' 个：' + names.join('、');
+    }
+    zone.addEventListener('click', function () { input.click(); });
+    input.addEventListener('change', showInfo);
+    zone.addEventListener('dragover', function (e) { e.preventDefault(); zone.classList.add('dragover'); });
+    zone.addEventListener('dragleave', function () { zone.classList.remove('dragover'); });
+    zone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        input.files = e.dataTransfer.files;
+        showInfo();
+    });
+}
+
+function working(text) {
+    document.getElementById('dialog-body').innerHTML =
+        '<div class="loading"></div><div style="text-align:center;color:var(--text-secondary)">' + text + '</div>';
+}
+
+function showCreate() {
+    var h = '<form id="cf" enctype="multipart/form-data">';
+    h += catSel('create-cat');
+    h += '<div class="form-group"><label>标题</label><input class="form-control" name="title" placeholder="留空则用文件名"></div>';
+    h += '<div class="form-group"><label>描述</label><textarea class="form-control" name="description"></textarea></div>';
+    h += dropzoneHtml('dz', '选择文件');
+    h += '<input type="file" id="file-input" name="file" style="display:none">';
+    h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>';
+    h += '<button type="submit" class="btn btn-primary">开始上传</button></div></form>';
+    openModal('上传文件', h);
+    document.getElementById('create-cat').value = activeCat;
+    wireDropzone('dz', 'file-input');
+
+    document.getElementById('cf').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var input = document.getElementById('file-input');
+        if (!input.files.length) { showToast('请先选择文件', 'error'); return; }
+        var fd = new FormData(this);
+        if (!fd.get('title')) fd.set('title', input.files[0].name.replace(/\.[^.]+$/, ''));
+        var cat = fd.get('category');
+        working('正在上传…');
+        fetch('/api/documents', { method: 'POST', body: fd })
+            .then(function (r) { return r.json() }).then(function (d) {
+                if (d.item) {
+                    closeModal();
+                    showToast('上传成功', 'success');
+                    activeCat = cat;
+                    setTimeout(function () { switchTo(cat); }, 200);
+                } else {
+                    showInlineModal('上传失败', '<div>' + (d.error || '未知错误') + '</div>');
+                }
+            }).catch(function () {
+                showInlineModal('上传失败', '<div>网络错误</div>');
+            });
+    });
+}
+
+function showBatch() {
+    var h = '<form id="bf" enctype="multipart/form-data">';
+    h += catSel('batch-cat');
+    h += '<div class="form-group"><label>选择多个文件</label>' +
+        '<div class="dropzone" id="bdz"><div class="dropzone-icon">📁</div>' +
+        '<div class="dropzone-text">可一次选中或拖入多个文件</div>' +
+        '<div class="dropzone-hint">图片 / PDF / Office 进文档库，音视频进访谈记录</div></div>' +
+        '<div id="bdz-info" class="file-preview" style="display:none"></div></div>';
+    h += '<input type="file" id="batch-input" name="files[]" multiple style="display:none">';
+    h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">取消</button>';
+    h += '<button type="submit" class="btn btn-primary">批量导入</button></div></form>';
+    openModal('批量导入文件', h);
+    document.getElementById('batch-cat').value = activeCat;
+    wireDropzone('bdz', 'batch-input');
+
+    document.getElementById('bf').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var input = document.getElementById('batch-input');
+        if (!input.files.length) { showToast('请先选择文件', 'error'); return; }
+        var cat = document.getElementById('batch-cat').value;
+        var fd = new FormData();
+        for (var i = 0; i < input.files.length; i++) fd.append('files[]', input.files[i]);
+        fd.append('category', cat);
+        working('正在上传…');
+        fetch('/api/batch-import-files', { method: 'POST', body: fd })
+            .then(function (r) { return r.json() }).then(function (d) {
+                if (d.ok) {
+                    closeModal();
+                    showToast('成功导入 ' + d.count + ' 个文件', 'success');
+                    setTimeout(function () { switchTo(cat); }, 200);
+                } else {
+                    showInlineModal('导入失败', '<div>' + (d.error || '未知错误') + '</div>');
+                }
+            }).catch(function () {
+                showInlineModal('导入失败', '<div>网络错误</div>');
+            });
+    });
+}
+
+function switchTo(cat) {
+    activeCat = cat;
+    var tabs = document.querySelectorAll('.tab');
+    for (var i = 0; i < tabs.length; i++) {
+        tabs[i].classList.toggle('active', tabs[i].getAttribute('data-cat') === cat);
+    }
+    try { loadData(1); } catch (e) {}
+}
+
+function initPage() {
+    var m = /[?&]category=(student|teacher)/.exec(location.search);
+    switchTo(m ? m[1] : 'student');
+    try { loadTagFilter('tag-filter'); } catch (e) {}
+}
+
+// app.js is loaded after this block, so wait for the load event first
+if (document.readyState === 'complete') setTimeout(initPage, 0);
+else window.addEventListener('load', initPage);
+</script>
+{% endblock %}

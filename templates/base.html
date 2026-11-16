@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}数据管理平台{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <div class="logo-icon">DB</div>
+                <span class="logo-text">数据管理平台</span>
+            </div>
+        </div>
+        <nav class="sidebar-nav">
+            
+            <a href="/questionnaires" class="nav-item {% if request.path.startswith('/questionnaires') %}active{% endif %}">
+                <span class="nav-icon">📋</span>
+                <span>问卷管理</span>
+            </a>
+            <a href="/interviews" class="nav-item {% if request.path.startswith('/interviews') %}active{% endif %}">
+                <span class="nav-icon">🎤</span>
+                <span>访谈记录</span>
+            </a>
+            <a href="/documents" class="nav-item {% if request.path.startswith('/documents') %}active{% endif %}">
+                <span class="nav-icon">📄</span>
+                <span>文档</span>
+            </a>
+            
+            <a href="/analysis" class="nav-item {% if request.path.startswith("/analysis") %}active{% endif %}">
+                <span class="nav-icon">📊</span>
+                <span>数据分析及可视化</span>
+            </a>
+            <a href="/visualizations" class="nav-item {% if request.path == '/visualizations' %}active{% endif %}">
+                <span class="nav-icon" aria-hidden="true">▥</span>
+                <span>自定义可视化</span>
+            </a>
+            <div class="nav-divider"></div>
+            <a href="/search" class="nav-item {% if request.path.startswith('/search') %}active{% endif %}">
+                <span class="nav-icon">🔍</span>
+                <span>全文检索</span>
+            </a>
+        </nav>
+        <div class="sidebar-footer">
+            {% if current_username %}
+            <div class="user-chip">
+                <span class="user-avatar">{{ current_username[:1] | upper }}</span>
+                <span class="user-name">{{ current_username }}{% if current_is_admin %} · 管理员{% endif %}</span>
+            </div>
+            <div class="footer-links">
+                <a href="/account">账号设置</a>
+                <a href="/logout">退出</a>
+            </div>
+            {% else %}
+            <div class="footer-links"><a href="/login">登录</a></div>
+            {% endif %}
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <header class="content-header">
+            <h1 class="page-title">{% block page_title %}{% endblock %}</h1>
+            <div class="header-actions">
+                {% block header_actions %}{% endblock %}
+            </div>
+        </header>
+        <div class="content-body">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+</div>
+
+<!-- Toast notification -->
+<div id="toast" class="toast">
+    <span id="toast-message"></span>
+</div>
+
+<!-- Modal backdrop -->
+<dialog id="modal-dialog" style="border:none;border-radius:16px;padding:0;box-shadow:0 20px 60px rgba(0,0,0,0.3);max-width:580px;width:90vw;max-height:85vh;overflow-y:auto;background:#fff">
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <h3 id="dialog-title" style="font-size:17px;font-weight:700;margin:0"></h3>
+        <button onclick="document.getElementById('modal-dialog').close()" style="width:32px;height:32px;border:none;background:none;font-size:24px;cursor:pointer;color:var(--text-muted);display:flex;align-items:center;justify-content:center;border-radius:50%">&times;</button>
+    </div>
+    <div id="dialog-body" style="padding:20px 24px 24px"></div>
+</dialog>
+
+{% block scripts %}{% endblock %}
+<script>function closeModal(){document.getElementById('modal-dialog').close();} function loadQuestionnaireDetail(id){
+    var body = document.getElementById('dialog-body');
+    body.innerHTML = '<div class="loading"></div>';
+    fetch('/api/detail/questionnaires/' + id)
+        .then(function(r){return r.text()})
+        .then(function(h){ body.innerHTML = h; });
+}
+function loadQuestionnairePart(id, kind){
+    var body = document.getElementById('dialog-body');
+    body.innerHTML = '<div class="loading"></div>';
+    fetch('/api/questionnaires/' + id + '/' + kind)
+        .then(function(r){return r.text()})
+        .then(function(h){ body.innerHTML = h; })
+        .catch(function(){ body.innerHTML = '<div>\u52a0\u8f7d\u5931\u8d25</div>'; });
+}
+function showInlineModal(t,h){document.getElementById("dialog-title").textContent=t;document.getElementById("dialog-body").innerHTML=h;document.getElementById("modal-dialog").showModal();}</script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}问卷管理 - 数据管理平台{% endblock %}
+{% block page_title %}问卷管理{% endblock %}
+{% block header_actions %}
+<button class="btn btn-primary" onclick="showCreate()">+ 新建问卷</button>
+<button class="btn btn-outline btn-sm" onclick="exportData('questionnaires')">导出</button>
+<button class="btn btn-outline btn-sm" onclick="showImport('questionnaires')">导入</button>
+{% endblock %}
+{% block content %}
+<div class="filter-bar">
+    <select id="tag-filter" onchange="loadData(1)"><option value="">全部标签</option></select>
+    <div class="search-bar">
+        <input type="text" id="search-input" placeholder="搜索问卷标题..." onkeydown="if(event.key==='Enter')loadData(1)">
+        <button class="btn btn-primary btn-sm" onclick="loadData(1)">搜索</button>
+    </div>
+</div>
+<div class="table-container"><table class="data-table"><thead><tr>
+    <th>ID</th><th>标题</th><th>描述</th><th>回答数</th><th>标签</th><th>创建时间</th><th>操作</th>
+</tr></thead><tbody id="data-body">
+{% for q in questionnaires %}
+<tr>
+<td>{{ q.id }}</td>
+<td><strong>{{ q.title }}</strong></td>
+<td class="text-muted">{{ (q.description or "")[:60] }}</td>
+<td>{{ q.respondent_count }}</td>
+<td></td>
+<td class="text-sm">{{ q.created_at[:16].replace("T"," ") if q.created_at else "-" }}</td>
+<td class="actions-cell">
+<button class="btn-icon" title="查看" onclick="document.getElementById('dialog-title').textContent='问卷详情 #{{ q.id }}';document.getElementById('dialog-body').innerHTML='';document.getElementById('modal-dialog').showModal();var x=new XMLHttpRequest();x.open('GET','/api/detail/questionnaires/{{ q.id }}',true);x.onload=function(){if(x.status==200)document.getElementById('dialog-body').innerHTML=x.responseText;};x.send()">📋</button>
+</td>
+</tr>
+{% endfor %}
+</tbody></table></div>
+<div id="pagination" class="pagination"></div>
+
+<script>
+function showInlineModal(t, h) {
+    document.getElementById("dialog-title").textContent = t;
+    document.getElementById("dialog-body").innerHTML = h;
+    document.getElementById("modal-dialog").showModal();
+}
+
+var tags = {{ tags|tojson }};
+try { loadTagFilter('tag-filter'); } catch (e) {}
+
+function loadData(page) {
+    var tagId = document.getElementById('tag-filter').value;
+    var search = document.getElementById('search-input').value;
+    var url = '/api/questionnaires?page=' + page + '&per_page=20';
+    if (tagId) url += '&tag_id=' + tagId;
+    if (search) url += '&search=' + encodeURIComponent(search);
+    fetch(url).then(function (r) { return r.json() }).then(function (d) {
+        var body = document.getElementById('data-body');
+        if (!d.items.length) {
+            body.innerHTML = '<tr class="empty-row"><td colspan="7">\u6682\u65e0\u6570\u636e</td></tr>';
+            return;
+        }
+        body.innerHTML = d.items.map(function (q) {
+            return '<tr><td>' + q.id + '</td>' +
+                '<td><strong>' + esc(q.title) + '</strong></td>' +
+                '<td class="text-muted">' + esc((q.description || '').slice(0, 60)) + '</td>' +
+                '<td>' + q.respondent_count + '</td>' +
+                '<td>' + tagBar(q.tags) + '</td>' +
+                '<td class="text-sm">' + fmtDate(q.created_at) + '</td>' +
+                '<td class="actions-cell">' +
+                    '<button class="btn-icon" title="\u67e5\u770b" onclick="showView(' + q.id + ')">\ud83d\udccb</button>' +
+                    '<button class="btn-icon" title="\u7f16\u8f91" onclick="showEdit(' + q.id + ')">\u270f\ufe0f</button>' +
+                    '<button class="btn-icon" title="\u5220\u9664" onclick="del(' + q.id + ')">\ud83d\uddd1\ufe0f</button>' +
+                '</td></tr>';
+        }).join('');
+        document.getElementById('pagination').innerHTML = pg(d.page, d.pages, d.total, 'loadData');
+    });
+}
+try { loadData(1); } catch (e) {}
+
+function showView(id) {
+    fetch('/api/detail/questionnaires/' + id).then(function (r) { return r.text() }).then(function (h) {
+        showInlineModal('\u95ee\u5377\u8be6\u60c5 #' + id, h);
+    });
+}
+
+function buildForm(q) {
+    var h = '<form id="qf">';
+    h += '<div class="form-group"><label>\u6807\u9898</label><input class="form-control" name="title" value="' + esc(q ? q.title : '') + '"></div>';
+    h += '<div class="form-group"><label>\u63cf\u8ff0</label><textarea class="form-control" name="description">' + esc(q ? (q.description || '') : '') + '</textarea></div>';
+    h += '<div class="form-group"><label>\u56de\u7b54\u6570</label><input class="form-control" name="respondent_count" type="number" value="' + (q ? q.respondent_count : 0) + '"></div>';
+    h += '<div class="form-group"><label>\u6807\u7b7e</label>' + tagSelect(tags, q ? (q.tags || []).map(function (t) { return t.id }) : []) + '</div>';
+    h += '<div class="form-actions"><button type="button" class="btn btn-outline" onclick="closeModal()">\u53d6\u6d88</button>';
+    h += '<button type="submit" class="btn btn-primary">' + (q ? '\u4fdd\u5b58' : '\u521b\u5efa') + '</button></div>';
+    h += '</form>';
+    return h;
+}
+
+function submitForm(id) {
+    document.getElementById('qf').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var fd = new FormData(this);
+        var data = {
+            title: fd.get('title'),
+            description: fd.get('description'),
+            respondent_count: parseInt(fd.get('respondent_count')) || 0,
+            tag_ids: getTagIds(this)
+        };
+        var url = id ? '/api/questionnaires/' + id : '/api/questionnaires';
+        var method = id ? 'PUT' : 'POST';
+        fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+            .then(function (r) { return r.json() }).then(function (d) {
+                if (d.item) {
+                    showToast(id ? '\u4fdd\u5b58\u6210\u529f' : '\u521b\u5efa\u6210\u529f', 'success');
+                    closeModal();
+                    try { loadData(1); } catch (e) {}
+                } else {
+                    showToast(d.error || (id ? '\u4fdd\u5b58\u5931\u8d25' : '\u521b\u5efa\u5931\u8d25'), 'error');
+                }
+            });
+    });
+}
+
+function showCreate() {
+    openModal('\u65b0\u5efa\u95ee\u5377', buildForm(null));
+    submitForm(null);
+}
+
+function showEdit(id) {
+    fetch('/api/questionnaires/' + id).then(function (r) { return r.json() }).then(function (result) {
+        var q = result.item;
+        if (!q) { showToast('\u672a\u627e\u5230\u8be5\u95ee\u5377', 'error'); return; }
+        openModal('\u7f16\u8f91\u95ee\u5377 #' + id, buildForm(q));
+        submitForm(id);
+    });
+}
+
+function del(id) {
+    if (!confirm('\u786e\u8ba4\u5220\u9664\u6b64\u95ee\u5377\uff1f')) return;
+    fetch('/api/questionnaires/' + id, { method: 'DELETE' }).then(function (r) { return r.json() }).then(function (d) {
+        if (d.ok) {
+            showToast('\u5220\u9664\u6210\u529f', 'success');
+            try { loadData(1); } catch (e) {}
+        } else {
+            showToast(d.error || '\u5220\u9664\u5931\u8d25', 'error');
+        }
+    });
+}
+
+</script>
+{% endblock %}
